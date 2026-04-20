@@ -1,0 +1,197 @@
+/* ============================================================
+   ABAC Demo — Kiểm soát truy cập hồ sơ dữ liệu nhạy cảm quốc gia
+   Attribute-Based Access Control | PEP / PDP / PIP / PAP
+   ============================================================ */
+
+/* ---------- CSS Variables ---------- */
+:root {
+    --primary: #1a56db;
+    --primary-light: #e8effc;
+    --danger: #dc2626;
+    --danger-light: #fef2f2;
+    --success: #16a34a;
+    --success-light: #f0fdf4;
+    --warning: #d97706;
+    --warning-light: #fffbeb;
+    --gray-50: #f9fafb;
+    --gray-100: #f3f4f6;
+    --gray-200: #e5e7eb;
+    --gray-300: #d1d5db;
+    --gray-500: #6b7280;
+    --gray-700: #374151;
+    --gray-900: #111827;
+}
+
+/* ---------- Reset & Base ---------- */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--gray-50);
+    color: var(--gray-900);
+    line-height: 1.5;
+}
+
+/* ---------- Header ---------- */
+.header {
+    background: linear-gradient(135deg, #1e3a5f 0%, #1a56db 100%);
+    color: white;
+    padding: 1rem 2rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+.header h1 { font-size: 1.25rem; font-weight: 600; }
+.header p { font-size: 0.85rem; opacity: 0.85; margin-top: 0.25rem; }
+
+/* ---------- Tabs ---------- */
+.tabs {
+    display: flex;
+    background: white;
+    border-bottom: 2px solid var(--gray-200);
+    padding: 0 1rem;
+}
+.tab {
+    padding: 0.75rem 1.5rem;
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+    font-weight: 500;
+    color: var(--gray-500);
+    transition: all 0.2s;
+}
+.tab:hover { color: var(--primary); }
+.tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+/* ---------- Layout ---------- */
+.content { max-width: 1400px; margin: 0 auto; padding: 1.5rem; }
+.panel { display: none; }
+.panel.active { display: block; }
+
+/* ---------- Card ---------- */
+.card {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+}
+.card h2 { font-size: 1.1rem; margin-bottom: 1rem; color: var(--gray-700); }
+.card h3 { font-size: 0.95rem; margin-bottom: 0.75rem; color: var(--gray-700); }
+
+/* ---------- Grid System ---------- */
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; }
+
+/* ---------- Form Elements ---------- */
+label {
+    display: block;
+    font-weight: 500;
+    font-size: 0.85rem;
+    margin-bottom: 0.25rem;
+    color: var(--gray-700);
+}
+select, input {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--gray-300);
+    border-radius: 6px;
+    font-size: 0.9rem;
+    margin-bottom: 0.75rem;
+}
+select:focus, input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(26,86,219,0.1);
+}
+
+/* ---------- Buttons ---------- */
+.btn {
+    padding: 0.6rem 1.5rem;
+    border: none;
+    border-radius: 6px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: all 0.2s;
+}
+.btn-primary { background: var(--primary); color: white; }
+.btn-primary:hover { background: #1448b8; }
+.btn-sm { padding: 0.35rem 0.75rem; font-size: 0.8rem; }
+.btn-success { background: var(--success); color: white; }
+.btn-danger { background: var(--danger); color: white; }
+.btn-warning { background: var(--warning); color: white; }
+
+/* ---------- Table ---------- */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+th {
+    background: var(--gray-100);
+    font-weight: 600;
+    text-align: left;
+    padding: 0.6rem 0.75rem;
+}
+td {
+    padding: 0.5rem 0.75rem;
+    border-top: 1px solid var(--gray-200);
+}
+tr:hover td { background: var(--gray-50); }
+
+/* ---------- Badges ---------- */
+.badge {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+.badge-permit { background: var(--success-light); color: var(--success); }
+.badge-deny { background: var(--danger-light); color: var(--danger); }
+.badge-active { background: var(--success-light); color: var(--success); }
+.badge-inactive { background: var(--danger-light); color: var(--danger); }
+.badge-suspended { background: var(--warning-light); color: var(--warning); }
+
+/* ---------- Result Box ---------- */
+.result-box {
+    padding: 1.5rem;
+    border-radius: 8px;
+    margin-top: 1rem;
+    border-left: 4px solid;
+}
+.result-permit { background: var(--success-light); border-color: var(--success); }
+.result-deny { background: var(--danger-light); border-color: var(--danger); }
+.result-box h3 { font-size: 1.2rem; margin-bottom: 0.5rem; }
+.result-detail { font-size: 0.9rem; margin-top: 0.5rem; }
+.result-detail span { font-weight: 600; }
+
+/* ---------- Classification Level Colors ---------- */
+.cl-1 { color: #16a34a; }
+.cl-2 { color: #2563eb; }
+.cl-3 { color: #d97706; }
+.cl-4 { color: #dc2626; }
+.cl-5 { color: #7c3aed; }
+
+/* ---------- Stat Cards ---------- */
+.stat-card {
+    text-align: center;
+    padding: 1.25rem;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+.stat-card .value { font-size: 2rem; font-weight: 700; }
+.stat-card .label { font-size: 0.8rem; color: var(--gray-500); }
+
+/* ---------- Misc ---------- */
+#loading {
+    display: none;
+    color: var(--gray-500);
+    font-style: italic;
+    margin: 1rem 0;
+}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 768px) {
+    .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    .tabs { overflow-x: auto; }
+}
