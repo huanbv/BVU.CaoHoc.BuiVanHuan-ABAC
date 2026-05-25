@@ -37,10 +37,21 @@ function statusBadge(s) {
 }
 
 // ============================================================
-// LOAD DROPDOWNS (PEP Form)
+// PAGINATION STATE (PIP tables)
+// ============================================================
+let userListPage = 1;
+let resourceListPage = 1;
+
+// ============================================================
+// LOAD DROPDOWNS (PEP Form) — top of list only (IDs thấp = seed + bulk đầu)
 // ============================================================
 async function loadDropdowns() {
-    const [users, resources] = await Promise.all([api('/api/users'), api('/api/resources')]);
+    const [usersRes, resRes] = await Promise.all([
+        api('/api/users?page=1&per_page=200'),
+        api('/api/resources?page=1&per_page=200'),
+    ]);
+    const users = usersRes.items || [];
+    const resources = resRes.items || [];
     const su = document.getElementById('sel-user');
     const sr = document.getElementById('sel-resource');
     su.innerHTML = users.map(u =>
@@ -56,9 +67,11 @@ loadDropdowns();
 // ACCESS CHECK (PEP → PDP)
 // ============================================================
 async function checkAccess() {
+    const uidRaw = (document.getElementById('inp-user-id')?.value || '').trim();
+    const ridRaw = (document.getElementById('inp-resource-id')?.value || '').trim();
     const body = {
-        user_id: document.getElementById('sel-user').value,
-        resource_id: document.getElementById('sel-resource').value,
+        user_id: uidRaw || document.getElementById('sel-user').value,
+        resource_id: ridRaw || document.getElementById('sel-resource').value,
         action: document.getElementById('sel-action').value,
         device_trust: document.getElementById('sel-device').value,
         network_zone: document.getElementById('sel-network').value,
@@ -110,11 +123,37 @@ function runTestCase(uid, rid, action, device, network, hour, threat) {
 }
 
 // ============================================================
-// LOAD USERS & RESOURCES DATA (PIP)
+// LOAD USERS & RESOURCES DATA (PIP) — pagination
 // ============================================================
-async function loadData() {
-    const [users, resources] = await Promise.all([api('/api/users'), api('/api/resources')]);
+function updatePager(kind, data) {
+    const total = data.total ?? 0;
+    const page = data.page ?? 1;
+    const pages = data.pages ?? 1;
+    const per = data.per_page ?? 50;
+    const metaId = kind === 'users' ? 'pager-users-meta' : 'pager-resources-meta';
+    const prevId = kind === 'users' ? 'btn-users-prev' : 'btn-resources-prev';
+    const nextId = kind === 'users' ? 'btn-users-next' : 'btn-resources-next';
+    const pageInp = kind === 'users' ? 'inp-users-page' : 'inp-resources-page';
 
+    document.getElementById(metaId).textContent =
+        `Trang ${page} / ${pages} — hiển thị tối đa ${per} dòng — tổng ${total.toLocaleString('vi-VN')} bản ghi`;
+
+    document.getElementById(prevId).disabled = page <= 1;
+    document.getElementById(nextId).disabled = page >= pages;
+    document.getElementById(pageInp).value = String(page);
+}
+
+async function loadUsersTable() {
+    const pp = parseInt(document.getElementById('sel-users-per').value, 10) || 50;
+    const q = document.getElementById('inp-users-q').value.trim();
+    const qs = new URLSearchParams({ page: String(userListPage), per_page: String(pp) });
+    if (q) qs.set('q', q);
+    const data = await api(`/api/users?${qs}`);
+    if (data.pages && userListPage > data.pages) {
+        userListPage = Math.max(1, data.pages);
+        return loadUsersTable();
+    }
+    const users = data.items || [];
     document.querySelector('#tbl-users tbody').innerHTML = users.map(u => {
         const attrs = (typeof u.attributes === 'string' ? JSON.parse(u.attributes) : u.attributes) || [];
         const attrStr = attrs.map(a =>
@@ -130,7 +169,20 @@ async function loadData() {
             <td>${attrStr || '-'}</td>
         </tr>`;
     }).join('');
+    updatePager('users', data);
+}
 
+async function loadResourcesTable() {
+    const pp = parseInt(document.getElementById('sel-resources-per').value, 10) || 50;
+    const q = document.getElementById('inp-resources-q').value.trim();
+    const qs = new URLSearchParams({ page: String(resourceListPage), per_page: String(pp) });
+    if (q) qs.set('q', q);
+    const data = await api(`/api/resources?${qs}`);
+    if (data.pages && resourceListPage > data.pages) {
+        resourceListPage = Math.max(1, data.pages);
+        return loadResourcesTable();
+    }
+    const resources = data.items || [];
     document.querySelector('#tbl-resources tbody').innerHTML = resources.map(r => `<tr>
         <td>${r.resource_id}</td>
         <td>${r.resource_name}</td>
@@ -140,7 +192,57 @@ async function loadData() {
         <td>${r.managing_region || '-'}</td>
         <td>${statusBadge(r.record_status)}</td>
     </tr>`).join('');
+    updatePager('resources', data);
 }
+
+function reloadUsersPage(page) {
+    userListPage = Math.max(1, page);
+    loadUsersTable();
+}
+
+function changeUsersPage(delta) {
+    userListPage = Math.max(1, userListPage + delta);
+    loadUsersTable();
+}
+
+function gotoUsersPage() {
+    const p = parseInt(document.getElementById('inp-users-page').value, 10);
+    if (!Number.isFinite(p) || p < 1) return;
+    userListPage = p;
+    loadUsersTable();
+}
+
+function reloadResourcesPage(page) {
+    resourceListPage = Math.max(1, page);
+    loadResourcesTable();
+}
+
+function changeResourcesPage(delta) {
+    resourceListPage = Math.max(1, resourceListPage + delta);
+    loadResourcesTable();
+}
+
+function gotoResourcesPage() {
+    const p = parseInt(document.getElementById('inp-resources-page').value, 10);
+    if (!Number.isFinite(p) || p < 1) return;
+    resourceListPage = p;
+    loadResourcesTable();
+}
+
+async function loadData() {
+    await Promise.all([loadUsersTable(), loadResourcesTable()]);
+}
+
+['inp-users-q', 'inp-resources-q'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+            if (id === 'inp-users-q') reloadUsersPage(1);
+            else reloadResourcesPage(1);
+        }
+    });
+});
 
 // ============================================================
 // LOAD POLICIES (PAP)

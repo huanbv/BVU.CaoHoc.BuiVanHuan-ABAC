@@ -35,6 +35,19 @@
                             <select id="sel-resource"></select>
                         </div>
                     </div>
+                    <p style="font-size:0.8rem;color:var(--gray-500);margin:0.5rem 0 0;">
+                        Dropdown chỉ hiện ~200 dòng đầu. Với dữ liệu lớn, nhập trực tiếp ID bên dưới để kiểm thử bulk.
+                    </p>
+                    <div class="grid-2">
+                        <div>
+                            <label>User ID (ghi đè dropdown, để trống = dropdown)</label>
+                            <input type="number" id="inp-user-id" min="1" placeholder="Ví dụ: 100001">
+                        </div>
+                        <div>
+                            <label>Resource ID (ghi đè dropdown)</label>
+                            <input type="number" id="inp-resource-id" min="1" placeholder="Ví dụ: 50000">
+                        </div>
+                    </div>
                     <div class="grid-3">
                         <div>
                             <label>Hành động (Action)</label>
@@ -118,17 +131,55 @@
         <div id="panel-data" class="panel">
             <div class="card">
                 <h2>Danh sách người dùng (PIP - Subject Attributes)</h2>
+                <div class="pager-toolbar">
+                    <input type="search" id="inp-users-q" placeholder="Lọc theo tên hoặc email..." style="min-width:220px;">
+                    <button type="button" class="btn btn-sm btn-primary" onclick="reloadUsersPage(1)">Lọc</button>
+                    <label class="pager-per-label">Số dòng/trang</label>
+                    <select id="sel-users-per" onchange="reloadUsersPage(1)">
+                        <option value="25">25</option>
+                        <option value="50" selected>50</option>
+                        <option value="100">100</option>
+                        <option value="200">200</option>
+                    </select>
+                </div>
                 <div style="overflow-x:auto;"><table id="tbl-users">
                     <thead><tr><th>ID</th><th>Họ tên</th><th>Cơ quan</th><th>Cấp BM</th><th>Trạng thái</th><th>Chức vụ</th><th>Thuộc tính mở rộng</th></tr></thead>
                     <tbody></tbody>
                 </table></div>
+                <div id="pager-users-meta" class="pager-meta"></div>
+                <div class="pager-row">
+                    <button type="button" class="btn btn-sm" id="btn-users-prev" onclick="changeUsersPage(-1)">« Trước</button>
+                    <button type="button" class="btn btn-sm" id="btn-users-next" onclick="changeUsersPage(1)">Sau »</button>
+                    <span class="pager-goto-label">Đến trang</span>
+                    <input type="number" id="inp-users-page" min="1" value="1" style="width:5rem;">
+                    <button type="button" class="btn btn-sm btn-primary" onclick="gotoUsersPage()">Đi</button>
+                </div>
             </div>
             <div class="card">
                 <h2>Danh sách tài nguyên (PIP - Resource Attributes)</h2>
+                <div class="pager-toolbar">
+                    <input type="search" id="inp-resources-q" placeholder="Lọc theo tên hoặc ID..." style="min-width:220px;">
+                    <button type="button" class="btn btn-sm btn-primary" onclick="reloadResourcesPage(1)">Lọc</button>
+                    <label class="pager-per-label">Số dòng/trang</label>
+                    <select id="sel-resources-per" onchange="reloadResourcesPage(1)">
+                        <option value="25">25</option>
+                        <option value="50" selected>50</option>
+                        <option value="100">100</option>
+                        <option value="200">200</option>
+                    </select>
+                </div>
                 <div style="overflow-x:auto;"><table id="tbl-resources">
                     <thead><tr><th>ID</th><th>Tên hồ sơ</th><th>Loại</th><th>Cơ quan sở hữu</th><th>Cấp mật</th><th>Vùng</th><th>Trạng thái</th></tr></thead>
                     <tbody></tbody>
                 </table></div>
+                <div id="pager-resources-meta" class="pager-meta"></div>
+                <div class="pager-row">
+                    <button type="button" class="btn btn-sm" id="btn-resources-prev" onclick="changeResourcesPage(-1)">« Trước</button>
+                    <button type="button" class="btn btn-sm" id="btn-resources-next" onclick="changeResourcesPage(1)">Sau »</button>
+                    <span class="pager-goto-label">Đến trang</span>
+                    <input type="number" id="inp-resources-page" min="1" value="1" style="width:5rem;">
+                    <button type="button" class="btn btn-sm btn-primary" onclick="gotoResourcesPage()">Đi</button>
+                </div>
             </div>
         </div>
 

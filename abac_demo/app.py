@@ -5,12 +5,25 @@ for national sensitive data records.
 """
 
 import json
+import math
+import os
 import time
 from flask import Flask, request, jsonify, render_template
 from database import query_all, query_one, execute
 from abac_engine import evaluate_access
 
 app = Flask(__name__)
+
+DEFAULT_PAGE_SIZE = 50
+MAX_PAGE_SIZE = 200
+
+
+def _pagination_params():
+    page = max(1, int(request.args.get("page", 1)))
+    per_page = int(request.args.get("per_page", DEFAULT_PAGE_SIZE))
+    per_page = min(max(1, per_page), MAX_PAGE_SIZE)
+    offset = (page - 1) * per_page
+    return page, per_page, offset
 
 
 # ---------------------------------------------------------------------------
@@ -26,22 +39,68 @@ def index():
 # ---------------------------------------------------------------------------
 @app.route("/api/users")
 def api_users():
-    users = query_all("""
-        SELECT u.*, a.agency_name,
-               COALESCE(
-                   (SELECT json_agg(json_build_object('key', ua.attr_key, 'value', ua.attr_value,
-                        'valid_from', ua.valid_from, 'valid_to', ua.valid_to))
-                    FROM user_attributes ua
-                    WHERE ua.user_id = u.user_id
-                      AND ua.valid_from <= NOW()
-                      AND (ua.valid_to IS NULL OR ua.valid_to > NOW())),
-                   '[]'::json
-               ) AS attributes
-        FROM users u
-        JOIN agencies a ON a.agency_code = u.agency_code
-        ORDER BY u.user_id
-    """)
-    return jsonify(users)
+    page, per_page, offset = _pagination_params()
+    q = (request.args.get("q") or "").strip()
+    like = f"%{q}%" if q else None
+
+    if q:
+        total = query_one(
+            """SELECT COUNT(*) AS c FROM users u
+               WHERE u.full_name ILIKE %s OR u.email ILIKE %s""",
+            (like, like),
+        )["c"]
+        users = query_all(
+            """
+            SELECT u.*, a.agency_name,
+                   COALESCE(
+                       (SELECT json_agg(json_build_object('key', ua.attr_key, 'value', ua.attr_value,
+                            'valid_from', ua.valid_from, 'valid_to', ua.valid_to))
+                        FROM user_attributes ua
+                        WHERE ua.user_id = u.user_id
+                          AND ua.valid_from <= NOW()
+                          AND (ua.valid_to IS NULL OR ua.valid_to > NOW())),
+                       '[]'::json
+                   ) AS attributes
+            FROM users u
+            JOIN agencies a ON a.agency_code = u.agency_code
+            WHERE u.full_name ILIKE %s OR u.email ILIKE %s
+            ORDER BY u.user_id
+            LIMIT %s OFFSET %s
+            """,
+            (like, like, per_page, offset),
+        )
+    else:
+        total = query_one("SELECT COUNT(*) AS c FROM users")["c"]
+        users = query_all(
+            """
+            SELECT u.*, a.agency_name,
+                   COALESCE(
+                       (SELECT json_agg(json_build_object('key', ua.attr_key, 'value', ua.attr_value,
+                            'valid_from', ua.valid_from, 'valid_to', ua.valid_to))
+                        FROM user_attributes ua
+                        WHERE ua.user_id = u.user_id
+                          AND ua.valid_from <= NOW()
+                          AND (ua.valid_to IS NULL OR ua.valid_to > NOW())),
+                       '[]'::json
+                   ) AS attributes
+            FROM users u
+            JOIN agencies a ON a.agency_code = u.agency_code
+            ORDER BY u.user_id
+            LIMIT %s OFFSET %s
+            """,
+            (per_page, offset),
+        )
+
+    pages = max(1, math.ceil(total / per_page)) if per_page else 1
+    return jsonify(
+        {
+            "items": users,
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "pages": pages,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -49,18 +108,60 @@ def api_users():
 # ---------------------------------------------------------------------------
 @app.route("/api/resources")
 def api_resources():
-    resources = query_all("""
-        SELECT r.*, a.agency_name,
-               COALESCE(
-                   (SELECT json_agg(json_build_object('key', ra.attr_key, 'value', ra.attr_value))
-                    FROM resource_attributes ra WHERE ra.resource_id = r.resource_id),
-                   '[]'::json
-               ) AS attributes
-        FROM resources r
-        JOIN agencies a ON a.agency_code = r.owner_agency
-        ORDER BY r.resource_id
-    """)
-    return jsonify(resources)
+    page, per_page, offset = _pagination_params()
+    q = (request.args.get("q") or "").strip()
+    like = f"%{q}%" if q else None
+
+    if q:
+        total = query_one(
+            """SELECT COUNT(*) AS c FROM resources r
+               WHERE r.resource_name ILIKE %s OR CAST(r.resource_id AS TEXT) = %s""",
+            (like, q),
+        )["c"]
+        resources = query_all(
+            """
+            SELECT r.*, a.agency_name,
+                   COALESCE(
+                       (SELECT json_agg(json_build_object('key', ra.attr_key, 'value', ra.attr_value))
+                        FROM resource_attributes ra WHERE ra.resource_id = r.resource_id),
+                       '[]'::json
+                   ) AS attributes
+            FROM resources r
+            JOIN agencies a ON a.agency_code = r.owner_agency
+            WHERE r.resource_name ILIKE %s OR CAST(r.resource_id AS TEXT) = %s
+            ORDER BY r.resource_id
+            LIMIT %s OFFSET %s
+            """,
+            (like, q, per_page, offset),
+        )
+    else:
+        total = query_one("SELECT COUNT(*) AS c FROM resources")["c"]
+        resources = query_all(
+            """
+            SELECT r.*, a.agency_name,
+                   COALESCE(
+                       (SELECT json_agg(json_build_object('key', ra.attr_key, 'value', ra.attr_value))
+                        FROM resource_attributes ra WHERE ra.resource_id = r.resource_id),
+                       '[]'::json
+                   ) AS attributes
+            FROM resources r
+            JOIN agencies a ON a.agency_code = r.owner_agency
+            ORDER BY r.resource_id
+            LIMIT %s OFFSET %s
+            """,
+            (per_page, offset),
+        )
+
+    pages = max(1, math.ceil(total / per_page)) if per_page else 1
+    return jsonify(
+        {
+            "items": resources,
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "pages": pages,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -185,4 +286,5 @@ def api_agencies():
 # RUN
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    debug_mode = os.getenv("FLASK_DEBUG", "false").lower() == "true"
+    app.run(host="0.0.0.0", port=5000, debug=debug_mode)
