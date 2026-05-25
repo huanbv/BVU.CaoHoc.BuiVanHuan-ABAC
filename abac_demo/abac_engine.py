@@ -121,10 +121,22 @@ def evaluate_access(user_id, resource_id, action, env):
             continue
 
         # Check all conditions (AND)
+        raw_conds = policy.get("conditions")
+        if raw_conds is None:
+            conds = []
+        elif isinstance(raw_conds, (list, tuple)):
+            conds = list(raw_conds)
+        else:
+            conds = []
+        conds = [c for c in conds if isinstance(c, dict)]
+
         all_met = True
-        for cond in policy["conditions"]:
-            attr_type = cond["attribute_type"]
-            attr_key = cond["attribute_key"]
+        for cond in conds:
+            attr_type = cond.get("attribute_type")
+            attr_key = cond.get("attribute_key")
+            if attr_type is None or attr_key is None:
+                all_met = False
+                break
 
             # Resolve actual value
             if attr_type == "subject":
@@ -151,9 +163,9 @@ def evaluate_access(user_id, resource_id, action, env):
             else:
                 actual = None
 
-            expected = _resolve_value(cond["compare_value"], user, resource)
+            expected = _resolve_value(cond.get("compare_value"), user, resource)
 
-            if not _compare(actual, cond["operator"], expected, cond["value_type"]):
+            if not _compare(actual, cond.get("operator"), expected, cond.get("value_type", "text")):
                 all_met = False
                 break
 

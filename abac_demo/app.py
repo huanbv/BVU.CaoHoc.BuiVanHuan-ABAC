@@ -4,15 +4,35 @@ Provides REST API for demonstrating the ABAC access control system
 for national sensitive data records.
 """
 
-import json
 import math
 import os
 import time
+from datetime import date, datetime
+from decimal import Decimal
+from uuid import UUID
+
 from flask import Flask, request, jsonify, render_template
-from database import query_all, query_one, execute
+from flask.json.provider import DefaultJSONProvider
+
+from database import execute, query_all, query_one
 from abac_engine import evaluate_access
 
+
+class RobustJSONProvider(DefaultJSONProvider):
+    """Serialize UUID/datetime/Decimal — common DB types that break default jsonify."""
+
+    def default(self, o):
+        if isinstance(o, UUID):
+            return str(o)
+        if isinstance(o, (datetime, date)):
+            return o.isoformat()
+        if isinstance(o, Decimal):
+            return float(o)
+        return super().default(o)
+
+
 app = Flask(__name__)
+app.json = RobustJSONProvider(app)
 
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 200
@@ -202,49 +222,59 @@ def api_toggle_policy(policy_id):
 # ---------------------------------------------------------------------------
 @app.route("/api/access/check", methods=["POST"])
 def api_access_check():
-    data = request.get_json(force=True)
+    try:
+        data = request.get_json(force=True)
 
-    user_id = int(data.get("user_id", 0))
-    resource_id = int(data.get("resource_id", 0))
-    action = data.get("action", "read")
-    env = {
-        "device_trust": data.get("device_trust", "medium"),
-        "network_zone": data.get("network_zone", "internal"),
-        "hour": int(data.get("hour", 10)),
-        "threat_level": data.get("threat_level", "normal"),
-    }
+        user_id = int(data.get("user_id", 0))
+        resource_id = int(data.get("resource_id", 0))
+        action = data.get("action", "read") or "read"
+        raw_hour = data.get("hour", 10)
+        try:
+            hour = int(raw_hour)
+        except (TypeError, ValueError):
+            return jsonify({"error": "Giờ (hour) phải là số nguyên 0–23"}), 400
 
-    start = time.perf_counter()
-    decision, reason, policy_id = evaluate_access(user_id, resource_id, action, env)
-    elapsed_ms = round((time.perf_counter() - start) * 1000, 1)
-
-    # Log to database via request_access function
-    result = query_one(
-        """SELECT * FROM request_access(
-            %s, %s, %s, %s, %s, %s, %s, %s
-        )""",
-        (
-            user_id,
-            resource_id,
-            action,
-            env["device_trust"],
-            env["network_zone"],
-            env["hour"],
-            None,  # ip_address
-            env["threat_level"],
-        ),
-    )
-
-    return jsonify(
-        {
-            "decision": decision,
-            "reason": reason,
-            "matched_policy_id": policy_id,
-            "evaluation_time_ms": elapsed_ms,
-            "request_id": result["request_id"] if result else None,
-            "trace_id": str(result["trace_id"]) if result else None,
+        env = {
+            "device_trust": data.get("device_trust") or "medium",
+            "network_zone": data.get("network_zone") or "internal",
+            "hour": hour,
+            "threat_level": data.get("threat_level") or "normal",
         }
-    )
+
+        start = time.perf_counter()
+        decision, reason, policy_id = evaluate_access(user_id, resource_id, action, env)
+        elapsed_ms = round((time.perf_counter() - start) * 1000, 1)
+
+        # Log via DB PEP (ghi access_requests + evaluate_access_dynamic + audit)
+        result = query_one(
+            """SELECT * FROM request_access(
+                %s, %s, %s, %s, %s, %s, %s, %s
+            )""",
+            (
+                user_id,
+                resource_id,
+                action,
+                env["device_trust"],
+                env["network_zone"],
+                env["hour"],
+                None,
+                env["threat_level"],
+            ),
+        )
+
+        return jsonify(
+            {
+                "decision": decision,
+                "reason": reason,
+                "matched_policy_id": policy_id,
+                "evaluation_time_ms": elapsed_ms,
+                "request_id": result["request_id"] if result else None,
+                "trace_id": str(result["trace_id"]) if result else None,
+            }
+        )
+    except Exception as exc:
+        app.logger.exception("api_access_check failed: %s", exc)
+        return jsonify({"error": str(exc), "type": type(exc).__name__}), 500
 
 
 # ---------------------------------------------------------------------------
@@ -252,26 +282,62 @@ def api_access_check():
 # ---------------------------------------------------------------------------
 @app.route("/api/audit/logs")
 def api_audit_logs():
-    limit = min(int(request.args.get("limit", 50)), 200)
-    logs = query_all(
-        """SELECT * FROM v_audit_trail ORDER BY request_id DESC LIMIT %s""",
-        (limit,),
-    )
-    return jsonify(logs)
+    try:
+        limit = min(int(request.args.get("limit", 50)), 200)
+        # Query trực tiếp (tránh VIEW có ORDER BY nội bộ gây kế hoạch chậm trên PostgreSQL một số bản).
+        logs = query_all(
+            """
+            SELECT
+                r.request_id,
+                r.trace_id,
+                r.request_time,
+                u.full_name AS user_name,
+                u.agency_code,
+                u.clearance_level AS user_clearance,
+                res.resource_name,
+                res.classification_level AS resource_classification,
+                res.owner_agency,
+                r.action,
+                r.env_device_trust,
+                r.env_network_zone,
+                r.env_hour,
+                r.env_threat_level,
+                d.decision,
+                d.reason,
+                d.matched_policy_id,
+                d.evaluation_time_ms,
+                d.is_break_glass
+            FROM access_requests r
+            JOIN users u ON u.user_id = r.user_id
+            JOIN resources res ON res.resource_id = r.resource_id
+            JOIN access_decisions d ON d.request_id = r.request_id
+            ORDER BY r.request_id DESC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        return jsonify(logs)
+    except Exception as exc:
+        app.logger.exception("api_audit_logs failed: %s", exc)
+        return jsonify({"error": str(exc), "type": type(exc).__name__}), 500
 
 
 @app.route("/api/audit/stats")
 def api_audit_stats():
-    user_stats = query_all("SELECT * FROM v_user_access_stats")
-    policy_stats = query_all("SELECT * FROM v_policy_hit_stats")
-    anomalies = query_all("SELECT * FROM v_anomaly_detection")
-    return jsonify(
-        {
-            "user_stats": user_stats,
-            "policy_stats": policy_stats,
-            "anomalies": anomalies,
-        }
-    )
+    try:
+        user_stats = query_all("SELECT * FROM v_user_access_stats")
+        policy_stats = query_all("SELECT * FROM v_policy_hit_stats")
+        anomalies = query_all("SELECT * FROM v_anomaly_detection")
+        return jsonify(
+            {
+                "user_stats": user_stats,
+                "policy_stats": policy_stats,
+                "anomalies": anomalies,
+            }
+        )
+    except Exception as exc:
+        app.logger.exception("api_audit_stats failed: %s", exc)
+        return jsonify({"error": str(exc), "type": type(exc).__name__}), 500
 
 
 # ---------------------------------------------------------------------------
