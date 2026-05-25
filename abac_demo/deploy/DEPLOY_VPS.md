@@ -71,6 +71,29 @@ docker compose -f docker-compose.prod.yml logs -f web
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
+## 8) Cập nhật nhanh (systemd + Gunicorn, không Docker)
+
+Sau khi clone repo tại `/var/www/abac` và cấu hình `systemctl` unit `abac-demo`, mỗi lần có code mới trên GitHub:
+
+```bash
+cd /var/www/abac/abac_demo
+sudo chmod +x scripts/deploy_vps_update.sh
+# Một lần (tránh lỗi dubious ownership), nếu chưa làm:
+# git config --global --add safe.directory /var/www/abac
+# Hoặc dùng:
+sudo AUTO_SAFE_DIR=1 ./scripts/deploy_vps_update.sh
+```
+
+Lần sau chỉ cần:
+
+```bash
+cd /var/www/abac/abac_demo
+sudo ./scripts/deploy_vps_update.sh
+```
+
+Nếu VPS có chỉnh tay file tracked và muốn **bỏ hết** để đồng bộ GitHub: `sudo FORCE_RESTORE=1 ./scripts/deploy_vps_update.sh`.  
+Xem đầu file `scripts/deploy_vps_update.sh` để biết đầy đủ biến `DEPLOY_*`, `SKIP_*`.
+
 ## Notes
 
 - Production stack binds app to `127.0.0.1:5000`; public access should go through Nginx only.
