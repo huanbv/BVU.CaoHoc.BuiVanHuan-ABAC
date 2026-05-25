@@ -119,6 +119,7 @@ async function checkAccess() {
         box.appendChild(h);
         box.appendChild(msg);
     }
+}
 
 function showResult(r) {
     const box = document.getElementById('result-box');
