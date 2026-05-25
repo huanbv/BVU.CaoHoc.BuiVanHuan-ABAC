@@ -94,6 +94,22 @@ sudo ./scripts/deploy_vps_update.sh
 Nếu VPS có chỉnh tay file tracked và muốn **bỏ hết** để đồng bộ GitHub: `sudo FORCE_RESTORE=1 ./scripts/deploy_vps_update.sh`.  
 Xem đầu file `scripts/deploy_vps_update.sh` để biết đầy đủ biến `DEPLOY_*`, `SKIP_*`.
 
+## Bảo mật (ứng dụng không đăng nhập)
+
+Demo vẫn cho phép mọi người gọi API đọc / kiểm tra PEP; các lớp bù sau giúp giảm lạm dụng và bảo vệ thao tác ghi:
+
+| Biến môi trường | Mục đích |
+|------------------|----------|
+| **`ABAC_ADMIN_TOKEN`** | Bắt buộc khi bật: mọi `PUT /api/policies/<id>/toggle` phải gửi header `X-Abac-Admin-Token: <token>` hoặc `Authorization: Bearer <token>`. **Nên đặt** trên môi trường công khai. Nếu để trống, server ghi cảnh báo khi khởi động và ai cũng có thể bật/tắt chính sách. |
+| **`ABAC_TRUST_PROXY=1`** | Khi chạy sau Nginx, bật để rate limit và log dùng IP thật từ `X-Forwarded-For` (và `ProxyFix` cho URL/scheme). |
+| **`ABAC_DEBUG_ERRORS=1`** | Chỉ dùng khi gỡ lỗi: API 500 trả về chi tiết exception. Mặc định tắt — client chỉ thấy thông báo chung. |
+| **`ABAC_MAX_BODY_BYTES`** | Giới hạn kích thước body JSON (mặc định 65536). |
+| **`ABAC_MAX_SEARCH_LEN`** | Độ dài tối đa tham số `q` trên `/api/users`, `/api/resources` (mặc định 200). |
+
+Ứng dụng còn: **giới hạn tốc độ theo IP** (Flask-Limiter, bộ nhớ in-process — mỗi worker Gunicorn có bộ đếm riêng), **tiêu đề HTTP** (CSP cơ bản, `X-Frame-Options: DENY`, …), **kiểm tra allowlist** cho payload `/api/access/check`.
+
+Gợi ý thêm tại Nginx: `limit_req` cho `location /api/`, HSTS sau khi có HTTPS, và chỉ mở cổng 80/443.
+
 ## Notes
 
 - Production stack binds app to `127.0.0.1:5000`; public access should go through Nginx only.

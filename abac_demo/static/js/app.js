@@ -53,8 +53,12 @@ document.querySelectorAll('.tab').forEach(tab => {
 // ============================================================
 // HELPERS
 // ============================================================
-const api = async (url, opts) => {
-    const res = await fetch(url, opts);
+const ABAC_ADMIN_SS_KEY = 'abac_admin_token';
+
+const api = async (url, opts = {}) => {
+    const headers = opts.headers ? { ...opts.headers } : {};
+    const { headers: _, ...rest } = opts;
+    const res = await fetch(url, { ...rest, headers });
     const text = await res.text();
     let data = null;
     try {
@@ -79,6 +83,17 @@ function clBadge(level) {
 function statusBadge(s) {
     return `<span class="badge badge-${s}">${s}</span>`;
 }
+
+(function initAdminTokenField() {
+    const el = document.getElementById('inp-admin-token');
+    if (!el) return;
+    el.value = sessionStorage.getItem(ABAC_ADMIN_SS_KEY) || '';
+    el.addEventListener('change', () => {
+        const v = el.value.trim();
+        if (v) sessionStorage.setItem(ABAC_ADMIN_SS_KEY, v);
+        else sessionStorage.removeItem(ABAC_ADMIN_SS_KEY);
+    });
+})();
 
 // ============================================================
 // PAGINATION STATE (PIP tables)
@@ -332,7 +347,11 @@ async function loadPolicies() {
 }
 
 async function togglePolicy(id) {
-    await api(`/api/policies/${id}/toggle`, { method: 'PUT' });
+    const inp = document.getElementById('inp-admin-token');
+    const tok = (inp?.value || sessionStorage.getItem(ABAC_ADMIN_SS_KEY) || '').trim();
+    const headers = {};
+    if (tok) headers['X-Abac-Admin-Token'] = tok;
+    await api(`/api/policies/${id}/toggle`, { method: 'PUT', headers });
     loadPolicies();
 }
 

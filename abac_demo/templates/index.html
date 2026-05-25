@@ -190,6 +190,14 @@
         <div id="panel-policies" class="panel">
             <div class="card">
                 <h2>Danh sách chính sách ABAC (PAP)</h2>
+                <p class="hint-security">
+                    Để bật/tắt chính sách, nếu máy chủ cấu hình <code>ABAC_ADMIN_TOKEN</code>,
+                    nhập khóa dưới đây. Giá trị chỉ được lưu trong <strong>phiên tab</strong> (sessionStorage), không gửi lên máy chủ ngoài header khi nhấn Bật/Tắt.
+                </p>
+                <div class="admin-token-bar">
+                    <label for="inp-admin-token">Khóa quản trị (header <code>X-Abac-Admin-Token</code>)</label>
+                    <input type="password" id="inp-admin-token" autocomplete="off" spellcheck="false" placeholder="Để trống nếu máy chủ chưa bật kiểm tra khóa">
+                </div>
                 <div style="overflow-x:auto;"><table id="tbl-policies">
                     <thead><tr><th>ID</th><th>Tên chính sách</th><th>Effect</th><th>Priority</th><th>Target</th><th>Điều kiện</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
                     <tbody></tbody>

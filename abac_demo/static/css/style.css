@@ -232,6 +232,15 @@ tr:hover td { background: var(--gray-50); }
 .stat-card .value { font-size: 2rem; font-weight: 700; }
 .stat-card .label { font-size: 0.8rem; color: var(--gray-500); }
 
+.hint-security {
+    font-size: 0.8rem;
+    color: var(--gray-500);
+    margin-bottom: 0.75rem;
+    line-height: 1.45;
+}
+.admin-token-bar { margin-bottom: 1rem; max-width: 32rem; }
+.admin-token-bar label code { font-size: 0.75rem; }
+
 /* ---------- Pager (PIP tables) ---------- */
 .pager-toolbar {
     display: flex;

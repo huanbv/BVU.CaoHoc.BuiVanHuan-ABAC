@@ -5,14 +5,31 @@ for national sensitive data records.
 """
 
 import math
+import os
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from flask import Flask, request, jsonify, render_template
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from flask import Flask, jsonify, render_template, request
 from flask.json.provider import DefaultJSONProvider
+from flask_limiter import Limiter
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from database import execute, query_all, query_one
+from security import (
+    admin_token_configured,
+    api_error_response,
+    apply_security_headers,
+    client_ip_for_rate_limit,
+    clamp_search_q,
+    trust_proxy_enabled,
+    validate_access_check_body,
+    verify_admin_request,
+)
 
 
 class RobustJSONProvider(DefaultJSONProvider):
@@ -31,6 +48,27 @@ class RobustJSONProvider(DefaultJSONProvider):
 app = Flask(__name__)
 app.json = RobustJSONProvider(app)
 
+_max_body = int(os.getenv("ABAC_MAX_BODY_BYTES", "65536"))
+app.config["MAX_CONTENT_LENGTH"] = _max_body
+
+if trust_proxy_enabled():
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
+
+limiter = Limiter(
+    app=app,
+    key_func=client_ip_for_rate_limit,
+    default_limits=[],
+    storage_uri="memory://",
+    headers_enabled=True,
+)
+
+with app.app_context():
+    if not admin_token_configured():
+        app.logger.warning(
+            "ABAC_ADMIN_TOKEN chưa đặt: mọi client đều có thể bật/tắt chính sách. "
+            "Trên môi trường công khai hãy đặt biến môi trường này."
+        )
+
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 200
 
@@ -41,6 +79,16 @@ def _pagination_params():
     per_page = min(max(1, per_page), MAX_PAGE_SIZE)
     offset = (page - 1) * per_page
     return page, per_page, offset
+
+
+@app.after_request
+def _security_headers(response):
+    return apply_security_headers(response)
+
+
+@app.errorhandler(413)
+def _payload_too_large(_e):
+    return jsonify({"error": "Payload quá lớn (giới hạn ABAC_MAX_BODY_BYTES)."}), 413
 
 
 # ---------------------------------------------------------------------------
@@ -55,9 +103,14 @@ def index():
 # API: Users (PIP)
 # ---------------------------------------------------------------------------
 @app.route("/api/users")
+@limiter.limit("120 per minute")
 def api_users():
     page, per_page, offset = _pagination_params()
-    q = (request.args.get("q") or "").strip()
+    q_raw = request.args.get("q")
+    q_bad = clamp_search_q(q_raw)
+    if q_bad[1]:
+        return q_bad[1]
+    q = q_bad[0]
     like = f"%{q}%" if q else None
 
     if q:
@@ -124,9 +177,14 @@ def api_users():
 # API: Resources (PIP)
 # ---------------------------------------------------------------------------
 @app.route("/api/resources")
+@limiter.limit("120 per minute")
 def api_resources():
     page, per_page, offset = _pagination_params()
-    q = (request.args.get("q") or "").strip()
+    q_raw = request.args.get("q")
+    q_bad = clamp_search_q(q_raw)
+    if q_bad[1]:
+        return q_bad[1]
+    q = q_bad[0]
     like = f"%{q}%" if q else None
 
     if q:
@@ -185,6 +243,7 @@ def api_resources():
 # API: Policies (PAP)
 # ---------------------------------------------------------------------------
 @app.route("/api/policies")
+@limiter.limit("120 per minute")
 def api_policies():
     policies = query_all("""
         SELECT p.*,
@@ -205,7 +264,11 @@ def api_policies():
 
 
 @app.route("/api/policies/<int:policy_id>/toggle", methods=["PUT"])
+@limiter.limit("30 per minute")
 def api_toggle_policy(policy_id):
+    auth_err = verify_admin_request()
+    if auth_err is not None:
+        return auth_err
     execute(
         "UPDATE policies SET is_enabled = NOT is_enabled WHERE policy_id = %s",
         (policy_id,),
@@ -218,41 +281,27 @@ def api_toggle_policy(policy_id):
 # API: Access Check (PEP + PDP)
 # ---------------------------------------------------------------------------
 @app.route("/api/access/check", methods=["POST"])
+@limiter.limit("50 per minute")
 def api_access_check():
     try:
         data = request.get_json(force=True)
+        norm, verr = validate_access_check_body(data)
+        if verr is not None:
+            return verr
 
-        user_id = int(data.get("user_id", 0))
-        resource_id = int(data.get("resource_id", 0))
-        action = data.get("action", "read") or "read"
-        raw_hour = data.get("hour", 10)
-        try:
-            hour = int(raw_hour)
-        except (TypeError, ValueError):
-            return jsonify({"error": "Giờ (hour) phải là số nguyên 0–23"}), 400
-
-        env = {
-            "device_trust": data.get("device_trust") or "medium",
-            "network_zone": data.get("network_zone") or "internal",
-            "hour": hour,
-            "threat_level": data.get("threat_level") or "normal",
-        }
-
-        # Một nguồn PDP: chỉ dùng PostgreSQL request_access (evaluate_access_dynamic),
-        # tránh lỗi/khác biệt với PDP Python và lỗi serialize khi gọi kép.
         result = query_one(
             """SELECT * FROM request_access(
                 %s, %s, %s, %s, %s, %s, %s, %s
             )""",
             (
-                user_id,
-                resource_id,
-                action,
-                env["device_trust"],
-                env["network_zone"],
-                env["hour"],
+                norm["user_id"],
+                norm["resource_id"],
+                norm["action"],
+                norm["device_trust"],
+                norm["network_zone"],
+                norm["hour"],
                 None,
-                env["threat_level"],
+                norm["threat_level"],
             ),
         )
 
@@ -277,18 +326,24 @@ def api_access_check():
             }
         )
     except Exception as exc:
-        app.logger.exception("api_access_check failed: %s", exc)
-        return jsonify({"error": str(exc), "type": type(exc).__name__}), 500
+        return api_error_response(app, exc, log_message="api_access_check failed")
 
 
 # ---------------------------------------------------------------------------
 # API: Audit Logs
 # ---------------------------------------------------------------------------
 @app.route("/api/audit/logs")
+@limiter.limit("90 per minute")
 def api_audit_logs():
     try:
-        limit = min(int(request.args.get("limit", 50)), 200)
-        # Query trực tiếp (tránh VIEW có ORDER BY nội bộ gây kế hoạch chậm trên PostgreSQL một số bản).
+        limit_raw = request.args.get("limit", 50)
+        try:
+            limit = min(int(limit_raw), 200)
+        except (TypeError, ValueError):
+            return jsonify({"error": "limit phải là số nguyên dương (tối đa 200)."}), 400
+        if limit < 1:
+            limit = 1
+
         logs = query_all(
             """
             SELECT
@@ -322,11 +377,11 @@ def api_audit_logs():
         )
         return jsonify(logs)
     except Exception as exc:
-        app.logger.exception("api_audit_logs failed: %s", exc)
-        return jsonify({"error": str(exc), "type": type(exc).__name__}), 500
+        return api_error_response(app, exc, log_message="api_audit_logs failed")
 
 
 @app.route("/api/audit/stats")
+@limiter.limit("60 per minute")
 def api_audit_stats():
     try:
         user_stats = query_all("SELECT * FROM v_user_access_stats")
@@ -340,14 +395,14 @@ def api_audit_stats():
             }
         )
     except Exception as exc:
-        app.logger.exception("api_audit_stats failed: %s", exc)
-        return jsonify({"error": str(exc), "type": type(exc).__name__}), 500
+        return api_error_response(app, exc, log_message="api_audit_stats failed")
 
 
 # ---------------------------------------------------------------------------
 # API: Agencies
 # ---------------------------------------------------------------------------
 @app.route("/api/agencies")
+@limiter.limit("120 per minute")
 def api_agencies():
     return jsonify(query_all("SELECT * FROM agencies ORDER BY agency_code"))
 

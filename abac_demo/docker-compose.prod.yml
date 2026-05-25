@@ -32,6 +32,10 @@ services:
       DB_USER: ${POSTGRES_USER:-postgres}
       DB_PASSWORD: ${POSTGRES_PASSWORD}
       FLASK_DEBUG: "false"
+      # Bảo mật (không đăng nhập): khuyến nghị đặt khóa dài ngẫu nhiên; UI gửi X-Abac-Admin-Token khi Bật/Tắt chính sách
+      ABAC_ADMIN_TOKEN: ${ABAC_ADMIN_TOKEN:-}
+      # Sau reverse proxy Nginx: ABAC_TRUST_PROXY=1
+      ABAC_TRUST_PROXY: ${ABAC_TRUST_PROXY:-}
 
 volumes:
   pgdata:
