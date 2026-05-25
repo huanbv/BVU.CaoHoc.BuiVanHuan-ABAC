@@ -4,9 +4,6 @@ Provides REST API for demonstrating the ABAC access control system
 for national sensitive data records.
 """
 
-import math
-import os
-import time
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
@@ -15,7 +12,6 @@ from flask import Flask, request, jsonify, render_template
 from flask.json.provider import DefaultJSONProvider
 
 from database import execute, query_all, query_one
-from abac_engine import evaluate_access
 
 
 class RobustJSONProvider(DefaultJSONProvider):
@@ -241,11 +237,8 @@ def api_access_check():
             "threat_level": data.get("threat_level") or "normal",
         }
 
-        start = time.perf_counter()
-        decision, reason, policy_id = evaluate_access(user_id, resource_id, action, env)
-        elapsed_ms = round((time.perf_counter() - start) * 1000, 1)
-
-        # Log via DB PEP (ghi access_requests + evaluate_access_dynamic + audit)
+        # Một nguồn PDP: chỉ dùng PostgreSQL request_access (evaluate_access_dynamic),
+        # tránh lỗi/khác biệt với PDP Python và lỗi serialize khi gọi kép.
         result = query_one(
             """SELECT * FROM request_access(
                 %s, %s, %s, %s, %s, %s, %s, %s
@@ -262,14 +255,24 @@ def api_access_check():
             ),
         )
 
+        if not result:
+            return jsonify({"error": "request_access không trả về kết quả"}), 500
+
+        eval_ms_db = result.get("evaluation_time_ms")
+        if eval_ms_db is not None:
+            try:
+                eval_ms_db = float(eval_ms_db)
+            except (TypeError, ValueError):
+                eval_ms_db = None
+
         return jsonify(
             {
-                "decision": decision,
-                "reason": reason,
-                "matched_policy_id": policy_id,
-                "evaluation_time_ms": elapsed_ms,
-                "request_id": result["request_id"] if result else None,
-                "trace_id": str(result["trace_id"]) if result else None,
+                "decision": result.get("decision"),
+                "reason": result.get("reason"),
+                "matched_policy_id": result.get("matched_policy_id"),
+                "evaluation_time_ms": eval_ms_db,
+                "request_id": result.get("request_id"),
+                "trace_id": str(result["trace_id"]) if result.get("trace_id") is not None else None,
             }
         )
     except Exception as exc:

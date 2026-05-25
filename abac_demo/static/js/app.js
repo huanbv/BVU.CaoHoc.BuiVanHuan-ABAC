@@ -24,7 +24,20 @@ document.querySelectorAll('.tab').forEach(tab => {
 // ============================================================
 const api = async (url, opts) => {
     const res = await fetch(url, opts);
-    return res.json();
+    const text = await res.text();
+    let data = null;
+    try {
+        data = text ? JSON.parse(text) : null;
+    } catch {
+        const clip = text.length > 300 ? `${text.slice(0, 300)}…` : text;
+        throw new Error(`Phản hồi không phải JSON (HTTP ${res.status}). Đầu tiên nhận được: ${clip}`);
+    }
+    if (!res.ok) {
+        const msg = (data && (data.error || data.message)) || `HTTP ${res.status}`;
+        const type = data && data.type ? ` (${data.type})` : '';
+        throw new Error(`${msg}${type}`);
+    }
+    return data;
 };
 
 function clBadge(level) {
@@ -81,15 +94,31 @@ async function checkAccess() {
     document.getElementById('loading').style.display = 'block';
     document.getElementById('result-box').style.display = 'none';
 
-    const r = await api('/api/access/check', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(body)
-    });
+    try {
+        const r = await api('/api/access/check', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
 
-    document.getElementById('loading').style.display = 'none';
-    showResult(r);
-}
+        document.getElementById('loading').style.display = 'none';
+        showResult(r);
+    } catch (e) {
+        document.getElementById('loading').style.display = 'none';
+        const box = document.getElementById('result-box');
+        const ph = document.getElementById('result-placeholder');
+        ph.style.display = 'none';
+        box.style.display = 'block';
+        box.className = 'result-box result-deny';
+        box.replaceChildren();
+        const h = document.createElement('h3');
+        h.textContent = '❌ Không gọi được API / Lỗi máy chủ';
+        const msg = document.createElement('div');
+        msg.className = 'result-detail';
+        msg.textContent = e.message || String(e);
+        box.appendChild(h);
+        box.appendChild(msg);
+    }
 
 function showResult(r) {
     const box = document.getElementById('result-box');
