@@ -106,9 +106,13 @@ Demo vẫn cho phép mọi người gọi API đọc / kiểm tra PEP; các lớ
 | **`ABAC_MAX_BODY_BYTES`** | Giới hạn kích thước body JSON (mặc định 65536). |
 | **`ABAC_MAX_SEARCH_LEN`** | Độ dài tối đa tham số `q` trên `/api/users`, `/api/resources` (mặc định 200). |
 
+| **`ABAC_STATS_SINCE_DAYS`** | `/api/audit/stats` — bảng bất thường chỉ tính log có `request_time` trong N ngày (mặc định **90**). Đặt **`0`** để không lọc (có thể rất chậm/treo nếu bảng lớn). |
+| **`ABAC_STATS_ANOMALY_MIN_REQUESTS`** | Ngưỡng tối thiểu số request/user để vào bảng anomaly (mặc định **2**). |
+| **`ABAC_STATS_ANOMALY_LIMIT`** | Số dòng tối đa trả về (10–500, mặc định **150**). |
+
 Ứng dụng còn: **giới hạn tốc độ theo IP** (Flask-Limiter, bộ nhớ in-process — mỗi worker Gunicorn có bộ đếm riêng), **tiêu đề HTTP** (CSP cơ bản, `X-Frame-Options: DENY`, …), **kiểm tra allowlist** cho payload `/api/access/check`.
 
-Gợi ý thêm tại Nginx: `limit_req` cho `location /api/`, HSTS sau khi có HTTPS, và chỉ mở cổng 80/443.
+Gợi ý thêm tại Nginx: `limit_req` cho `location /api/`, HSTS sau khi có HTTPS, và chỉ mở cổng 80/443. Với nhiều bản ghi `access_requests`, tạo chỉ mục ví dụ `CREATE INDEX IF NOT EXISTS idx_access_requests_time ON access_requests (request_time DESC);` giúp cửa sổ thời gian nhanh hơn.
 
 ## Notes
 

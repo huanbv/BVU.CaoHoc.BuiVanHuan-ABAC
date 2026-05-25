@@ -381,6 +381,20 @@ async function loadAuditLogs() {
 
 async function loadAuditStats() {
     const stats = await api('/api/audit/stats');
+    const meta = stats.meta || {};
+    const metaEl = document.getElementById('audit-anomaly-meta');
+    if (metaEl) {
+        const days = meta.audit_anomaly_since_days;
+        const lim = meta.audit_anomaly_row_limit;
+        if (days != null && days > 0 && lim != null) {
+            metaEl.textContent =
+                `Phạm vi phát hiện: khoảng ${days} ngày gần nhất (theo cấu hình server); tối đa ${lim} dòng.`;
+        } else if (lim != null) {
+            metaEl.textContent = `Tối đa ${lim} dòng (server không giới hạn thời gian — nếu log rất lớn có thể chậm).`;
+        } else {
+            metaEl.textContent = '';
+        }
+    }
     const us = stats.user_stats || [];
     const totalReqs = us.reduce((s, u) => s + (u.total_requests || 0), 0);
     const totalPermit = us.reduce((s, u) => s + (u.permit_count || 0), 0);

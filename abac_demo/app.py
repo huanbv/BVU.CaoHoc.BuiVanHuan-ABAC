@@ -72,6 +72,12 @@ with app.app_context():
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 200
 
+# Thống kê audit/v_anomaly_detection cũ quét và GROUP BY cả bảng access_requests —
+# với dữ liệu lớn gây timeout/500. Dùng tổng hợp nhẹ và cửa sổ thời gian.
+_STATS_SINCE_DAYS = int(os.getenv("ABAC_STATS_SINCE_DAYS", "90"))
+_STATS_ANOMALY_MIN_REQ = max(1, int(os.getenv("ABAC_STATS_ANOMALY_MIN_REQUESTS", "2")))
+_STATS_ANOMALY_LIMIT = min(500, max(10, int(os.getenv("ABAC_STATS_ANOMALY_LIMIT", "150"))))
+
 
 def _pagination_params():
     page = max(1, int(request.args.get("page", 1)))
@@ -383,15 +389,103 @@ def api_audit_logs():
 @app.route("/api/audit/stats")
 @limiter.limit("60 per minute")
 def api_audit_stats():
+    """Không đọc VIEW v_user_access_stats / v_anomaly — tránh full-scan khi có nhiều log."""
     try:
-        user_stats = query_all("SELECT * FROM v_user_access_stats")
-        policy_stats = query_all("SELECT * FROM v_policy_hit_stats")
-        anomalies = query_all("SELECT * FROM v_anomaly_detection")
+        # Một hàng tổng (UI cộng dồn total_requests / permit / deny như trước)
+        user_agg = query_all(
+            """
+            SELECT
+                NULL::INTEGER AS user_id,
+                ''::TEXT AS full_name,
+                ''::TEXT AS agency_code,
+                COUNT(*)::BIGINT AS total_requests,
+                COUNT(*) FILTER (WHERE decision = 'permit')::BIGINT AS permit_count,
+                COUNT(*) FILTER (WHERE decision = 'deny')::BIGINT AS deny_count,
+                ROUND(
+                    100.0 * COUNT(*) FILTER (WHERE decision = 'deny')
+                    / NULLIF(COUNT(*), 0),
+                    1
+                ) AS deny_rate_pct,
+                AVG(evaluation_time_ms)::DOUBLE PRECISION AS avg_eval_ms
+            FROM access_decisions
+            """
+        )
+
+        policy_stats = query_all(
+            """
+            SELECT
+                p.policy_id,
+                p.policy_name,
+                p.effect,
+                p.priority,
+                COALESCE(h.hit_count, 0)::BIGINT AS hit_count,
+                p.is_enabled
+            FROM policies p
+            LEFT JOIN (
+                SELECT matched_policy_id AS pid, COUNT(*) AS hit_count
+                FROM access_decisions
+                WHERE matched_policy_id IS NOT NULL
+                GROUP BY matched_policy_id
+            ) h ON h.pid = p.policy_id
+            ORDER BY hit_count DESC NULLS LAST, p.policy_id
+            """
+        )
+
+        if _STATS_SINCE_DAYS <= 0:
+            time_filter = ""
+            time_params = ()
+        else:
+            time_filter = "AND r.request_time >= NOW() - make_interval(days => %s)"
+            time_params = (_STATS_SINCE_DAYS,)
+
+        anomalies = query_all(
+            f"""
+            WITH per_user AS (
+                SELECT
+                    r.user_id,
+                    COUNT(*) AS total_requests,
+                    COUNT(*) FILTER (WHERE d.decision = 'deny') AS deny_count,
+                    ROUND(
+                        100.0 * COUNT(*) FILTER (WHERE d.decision = 'deny')
+                        / NULLIF(COUNT(*), 0),
+                        1
+                    ) AS deny_rate_pct
+                FROM access_requests r
+                JOIN access_decisions d ON d.request_id = r.request_id
+                WHERE 1=1
+                {time_filter}
+                GROUP BY r.user_id
+                HAVING COUNT(*) >= %s
+            )
+            SELECT
+                u.user_id,
+                u.full_name,
+                u.agency_code,
+                p.total_requests,
+                p.deny_count,
+                p.deny_rate_pct,
+                CASE
+                    WHEN p.deny_rate_pct > 80 THEN 'HIGH RISK'
+                    WHEN p.deny_rate_pct > 50 THEN 'MEDIUM RISK'
+                    ELSE 'NORMAL'
+                END AS risk_level
+            FROM per_user p
+            JOIN users u ON u.user_id = p.user_id
+            ORDER BY p.deny_rate_pct DESC NULLS LAST, p.total_requests DESC
+            LIMIT %s
+            """,
+            (*time_params, _STATS_ANOMALY_MIN_REQ, _STATS_ANOMALY_LIMIT),
+        )
+
         return jsonify(
             {
-                "user_stats": user_stats,
+                "user_stats": user_agg,
                 "policy_stats": policy_stats,
                 "anomalies": anomalies,
+                "meta": {
+                    "audit_anomaly_since_days": _STATS_SINCE_DAYS if _STATS_SINCE_DAYS > 0 else None,
+                    "audit_anomaly_row_limit": _STATS_ANOMALY_LIMIT,
+                },
             }
         )
     except Exception as exc:
