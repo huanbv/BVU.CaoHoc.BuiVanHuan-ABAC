@@ -3,15 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ABAC Demo - Kiểm soát truy cập hồ sơ nhạy cảm quốc gia</title>
+    <title>ABAC Demo — PEP / PDP / PIP</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect fill='%231a56db' width='16' height='16'/></svg>">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
-    <div class="header">
-        <h1>ABAC Demo — Kiểm soát truy cập hồ sơ dữ liệu nhạy cảm cấp quốc gia</h1>
-        <p>Attribute-Based Access Control | PEP / PDP / PIP / PAP Architecture</p>
-    </div>
+    <header class="header">
+        <div class="header-inner">
+            <h1>ABAC Demo</h1>
+            <p class="header-meta">Kiểm soát truy cập theo thuộc tính (PEP · PDP · PIP · PAP). PostgreSQL.</p>
+        </div>
+    </header>
 
     <div class="tabs">
         <div class="tab active" data-tab="check">Kiểm tra truy cập</div>
@@ -96,8 +98,8 @@
 
                 <div class="card">
                     <h2>Kết quả đánh giá (PDP)</h2>
-                    <div id="result-placeholder" style="color:var(--gray-500);font-style:italic;">
-                        Chọn người dùng, tài nguyên, thiết lập ngữ cảnh và nhấn "Kiểm tra quyền truy cập"
+                    <div id="result-placeholder" style="color:var(--gray-500);font-size:0.9rem;">
+                        Chọn subject và resource, thiết lập ngữ cảnh rồi nhấn <strong>Kiểm tra quyền truy cập</strong>.
                     </div>
                     <div id="result-box" style="display:none;"></div>
                 </div>

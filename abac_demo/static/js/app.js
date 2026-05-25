@@ -1,8 +1,39 @@
 /**
- * ABAC Demo — Frontend Application
- * Kiểm soát truy cập hồ sơ dữ liệu nhạy cảm cấp quốc gia
- * Attribute-Based Access Control | PEP / PDP / PIP / PAP
+ * ABAC Demo — Frontend
  */
+
+// ---------- SVG icons (stroke, 24dp-style) — no emoji ----------
+function uiIcon(paths, svgAttrs = '') {
+    const inner = paths.map((d) => `<path d="${d}"/>`).join('');
+    return `<svg class="ui-icon" xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ${svgAttrs}>${inner}</svg>`;
+}
+
+const Icon = {
+    permit: () => uiIcon([
+        'M22 11.08V12a10 10 0 1 1-5.93-9.14',
+        'm9 11 3 3L22 4',
+    ]),
+    deny: () => uiIcon([
+        'M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10',
+        'm15 9-6 6',
+        'm9 9 6 6',
+    ]),
+    alert: () => uiIcon([
+        'M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10',
+        'M12 8v4',
+        'M12 16h.01',
+    ]),
+    /** Break-glass — ổ khóa mở (stroke) */
+    breakGlass: () =>
+        `<svg class="ui-icon ui-icon--sm" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>`,
+};
+
+function escHtml(s) {
+    if (s == null || s === '') return '';
+    const d = document.createElement('div');
+    d.textContent = String(s);
+    return d.innerHTML;
+}
 
 // ============================================================
 // TAB SWITCHING
@@ -68,10 +99,10 @@ async function loadDropdowns() {
     const su = document.getElementById('sel-user');
     const sr = document.getElementById('sel-resource');
     su.innerHTML = users.map(u =>
-        `<option value="${u.user_id}">${u.full_name} (${u.agency_code}, CL${u.clearance_level}, ${u.employment_status})</option>`
+        `<option value="${u.user_id}">${escHtml(u.full_name)} (${escHtml(u.agency_code)}, CL${u.clearance_level}, ${escHtml(u.employment_status)})</option>`
     ).join('');
     sr.innerHTML = resources.map(r =>
-        `<option value="${r.resource_id}">${r.resource_name} (CL${r.classification_level})</option>`
+        `<option value="${r.resource_id}">${escHtml(r.resource_name)} (CL${r.classification_level})</option>`
     ).join('');
 }
 loadDropdowns();
@@ -111,12 +142,13 @@ async function checkAccess() {
         box.style.display = 'block';
         box.className = 'result-box result-deny';
         box.replaceChildren();
-        const h = document.createElement('h3');
-        h.textContent = '❌ Không gọi được API / Lỗi máy chủ';
+        const row = document.createElement('h3');
+        row.className = 'result-title';
+        row.innerHTML = `${Icon.alert()}<span>Lỗi máy chủ hoặc API</span>`;
         const msg = document.createElement('div');
         msg.className = 'result-detail';
         msg.textContent = e.message || String(e);
-        box.appendChild(h);
+        box.appendChild(row);
         box.appendChild(msg);
     }
 }
@@ -128,13 +160,15 @@ function showResult(r) {
     box.style.display = 'block';
     const isPermit = r.decision === 'permit';
     box.className = `result-box ${isPermit ? 'result-permit' : 'result-deny'}`;
+    const titleText = isPermit ? 'PERMIT — Cho phép truy cập' : 'DENY — Từ chối truy cập';
+    const icon = isPermit ? Icon.permit() : Icon.deny();
     box.innerHTML = `
-        <h3>${isPermit ? '✅ PERMIT — Cho phép truy cập' : '❌ DENY — Từ chối truy cập'}</h3>
-        <div class="result-detail"><span>Lý do:</span> ${r.reason}</div>
-        <div class="result-detail"><span>Policy ID:</span> ${r.matched_policy_id || 'N/A (default deny)'}</div>
-        <div class="result-detail"><span>Thời gian đánh giá:</span> ${r.evaluation_time_ms}ms</div>
-        <div class="result-detail"><span>Request ID:</span> ${r.request_id || 'N/A'}</div>
-        <div class="result-detail"><span>Trace ID:</span> <code>${r.trace_id || 'N/A'}</code></div>
+        <h3 class="result-title">${icon}<span>${titleText}</span></h3>
+        <div class="result-detail"><span>Lý do:</span> ${escHtml(r.reason)}</div>
+        <div class="result-detail"><span>Policy ID:</span> ${escHtml(r.matched_policy_id != null ? String(r.matched_policy_id) : '—')}</div>
+        <div class="result-detail"><span>Thời gian đánh giá:</span> ${escHtml(r.evaluation_time_ms != null ? String(r.evaluation_time_ms) + ' ms' : '—')}</div>
+        <div class="result-detail"><span>Request ID:</span> ${escHtml(r.request_id != null ? String(r.request_id) : '—')}</div>
+        <div class="result-detail"><span>Trace ID:</span> <code>${escHtml(r.trace_id != null ? String(r.trace_id) : '—')}</code></div>
     `;
 }
 
@@ -187,15 +221,15 @@ async function loadUsersTable() {
     document.querySelector('#tbl-users tbody').innerHTML = users.map(u => {
         const attrs = (typeof u.attributes === 'string' ? JSON.parse(u.attributes) : u.attributes) || [];
         const attrStr = attrs.map(a =>
-            `<span class="badge" style="background:var(--primary-light);color:var(--primary);margin:2px;">${a.key}=${a.value}</span>`
+            `<span class="badge" style="background:var(--primary-light);color:var(--primary);margin:2px;">${escHtml(a.key)}=${escHtml(a.value)}</span>`
         ).join(' ');
         return `<tr>
             <td>${u.user_id}</td>
-            <td>${u.full_name}</td>
-            <td>${u.agency_code} (${u.agency_name})</td>
+            <td>${escHtml(u.full_name)}</td>
+            <td>${escHtml(u.agency_code)} (${escHtml(u.agency_name)})</td>
             <td>${clBadge(u.clearance_level)}</td>
             <td>${statusBadge(u.employment_status)}</td>
-            <td>${u.position || '-'}</td>
+            <td>${escHtml(u.position || '-')}</td>
             <td>${attrStr || '-'}</td>
         </tr>`;
     }).join('');
@@ -215,11 +249,11 @@ async function loadResourcesTable() {
     const resources = data.items || [];
     document.querySelector('#tbl-resources tbody').innerHTML = resources.map(r => `<tr>
         <td>${r.resource_id}</td>
-        <td>${r.resource_name}</td>
-        <td>${r.resource_type}</td>
-        <td>${r.owner_agency} (${r.agency_name})</td>
+        <td>${escHtml(r.resource_name)}</td>
+        <td>${escHtml(r.resource_type)}</td>
+        <td>${escHtml(r.owner_agency)} (${escHtml(r.agency_name)})</td>
         <td>${clBadge(r.classification_level)}</td>
-        <td>${r.managing_region || '-'}</td>
+        <td>${escHtml(r.managing_region || '-')}</td>
         <td>${statusBadge(r.record_status)}</td>
     </tr>`).join('');
     updatePager('resources', data);
@@ -282,11 +316,11 @@ async function loadPolicies() {
     document.querySelector('#tbl-policies tbody').innerHTML = policies.map(p => {
         const conds = (typeof p.conditions === 'string' ? JSON.parse(p.conditions) : p.conditions) || [];
         const condStr = conds.map(c =>
-            `<div style="font-size:0.8rem;"><b>${c.attribute_type}.${c.attribute_key}</b> ${c.operator} ${c.compare_value}</div>`
+            `<div style="font-size:0.8rem;"><b>${escHtml(c.attribute_type)}.${escHtml(c.attribute_key)}</b> ${escHtml(c.operator)} ${escHtml(String(c.compare_value ?? ''))}</div>`
         ).join('');
         return `<tr>
             <td>${p.policy_id}</td>
-            <td><b>${p.policy_name}</b><br><span style="font-size:0.8rem;color:var(--gray-500);">${p.description || ''}</span></td>
+            <td><b>${escHtml(p.policy_name)}</b><br><span style="font-size:0.8rem;color:var(--gray-500);">${escHtml(p.description || '')}</span></td>
             <td><span class="badge badge-${p.effect}">${p.effect.toUpperCase()}</span></td>
             <td>${p.priority}</td>
             <td>${p.target_resource_type}/${p.target_action}</td>
@@ -307,20 +341,23 @@ async function togglePolicy(id) {
 // ============================================================
 async function loadAuditLogs() {
     const logs = await api('/api/audit/logs?limit=50');
-    document.querySelector('#tbl-audit tbody').innerHTML = (logs || []).map(l => `<tr>
+    document.querySelector('#tbl-audit tbody').innerHTML = (logs || []).map(l => {
+        const tracePrefix = escHtml((l.trace_id || '').substring(0, 8));
+        return `<tr>
         <td>${l.request_id}</td>
-        <td>${new Date(l.request_time).toLocaleString('vi-VN')}</td>
-        <td style="font-size:0.7rem;">${(l.trace_id || '').substring(0,8)}...</td>
-        <td>${l.user_name} (${l.agency_code})</td>
-        <td>${l.resource_name}</td>
-        <td>${l.action}</td>
-        <td>${l.env_device_trust}</td>
-        <td>${l.env_network_zone}</td>
+        <td>${escHtml(new Date(l.request_time).toLocaleString('vi-VN'))}</td>
+        <td style="font-size:0.7rem;">${tracePrefix}${(l.trace_id && l.trace_id.length > 8) ? '…' : ''}</td>
+        <td>${escHtml(l.user_name)} (${escHtml(l.agency_code)})</td>
+        <td>${escHtml(l.resource_name)}</td>
+        <td>${escHtml(l.action)}</td>
+        <td>${escHtml(l.env_device_trust)}</td>
+        <td>${escHtml(l.env_network_zone)}</td>
         <td>${l.env_hour}h</td>
-        <td><span class="badge badge-${l.decision}">${l.decision.toUpperCase()}${l.is_break_glass ? ' 🔓' : ''}</span></td>
-        <td style="font-size:0.8rem;">${l.reason}</td>
+        <td><span class="badge badge-${l.decision} badge-with-icon">${l.decision.toUpperCase()}${l.is_break_glass ? `<span class="badge-suffix" title="Break-glass">${Icon.breakGlass()}<span class="badge-suffix-text">break-glass</span></span>` : ''}</span></td>
+        <td style="font-size:0.8rem;">${escHtml(l.reason)}</td>
         <td>${l.evaluation_time_ms || '-'}ms</td>
-    </tr>`).join('');
+    </tr>`;
+    }).join('');
 }
 
 async function loadAuditStats() {
@@ -341,12 +378,12 @@ async function loadAuditStats() {
         const riskColor = a.risk_level === 'HIGH RISK' ? 'var(--danger)' : a.risk_level === 'MEDIUM RISK' ? 'var(--warning)' : 'var(--success)';
         return `<tr>
             <td>${a.user_id}</td>
-            <td>${a.full_name}</td>
-            <td>${a.agency_code}</td>
+            <td>${escHtml(a.full_name)}</td>
+            <td>${escHtml(a.agency_code)}</td>
             <td>${a.total_requests}</td>
             <td>${a.deny_count}</td>
             <td>${a.deny_rate_pct}%</td>
-            <td style="color:${riskColor};font-weight:600;">${a.risk_level}</td>
+            <td style="color:${riskColor};font-weight:600;">${escHtml(a.risk_level)}</td>
         </tr>`;
     }).join('');
 }

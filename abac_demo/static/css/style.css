@@ -1,7 +1,4 @@
-/* ============================================================
-   ABAC Demo — Kiểm soát truy cập hồ sơ dữ liệu nhạy cảm quốc gia
-   Attribute-Based Access Control | PEP / PDP / PIP / PAP
-   ============================================================ */
+/* ABAC Demo — giao diện trung tính */
 
 /* ---------- CSS Variables ---------- */
 :root {
@@ -34,31 +31,42 @@ body {
 
 /* ---------- Header ---------- */
 .header {
-    background: linear-gradient(135deg, #1e3a5f 0%, #1a56db 100%);
-    color: white;
-    padding: 1rem 2rem;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    background: #111827;
+    color: #f9fafb;
+    padding: 0.875rem 1.5rem;
+    border-bottom: 1px solid #1f2937;
 }
-.header h1 { font-size: 1.25rem; font-weight: 600; }
-.header p { font-size: 0.85rem; opacity: 0.85; margin-top: 0.25rem; }
+.header-inner { max-width: 1400px; margin: 0 auto; }
+.header h1 { font-size: 1.125rem; font-weight: 600; letter-spacing: -0.01em; }
+.header-meta {
+    font-size: 0.8125rem;
+    color: #9ca3af;
+    margin-top: 0.2rem;
+    font-weight: 400;
+}
 
 /* ---------- Tabs ---------- */
 .tabs {
     display: flex;
     background: white;
-    border-bottom: 2px solid var(--gray-200);
-    padding: 0 1rem;
+    border-bottom: 1px solid var(--gray-200);
+    padding: 0 0.75rem;
 }
 .tab {
-    padding: 0.75rem 1.5rem;
+    padding: 0.65rem 1rem;
     cursor: pointer;
-    border-bottom: 3px solid transparent;
+    border-bottom: 2px solid transparent;
     font-weight: 500;
-    color: var(--gray-500);
-    transition: all 0.2s;
+    font-size: 0.9rem;
+    color: var(--gray-700);
+    transition: color 0.15s ease, border-color 0.15s ease;
 }
-.tab:hover { color: var(--primary); }
-.tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+.tab:hover { color: var(--gray-900); }
+.tab.active {
+    color: var(--gray-900);
+    border-bottom-color: var(--primary);
+    font-weight: 600;
+}
 
 /* ---------- Layout ---------- */
 .content { max-width: 1400px; margin: 0 auto; padding: 1.5rem; }
@@ -68,10 +76,11 @@ body {
 /* ---------- Card ---------- */
 .card {
     background: white;
-    border-radius: 8px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-    padding: 1.5rem;
-    margin-bottom: 1.5rem;
+    border-radius: 6px;
+    border: 1px solid var(--gray-200);
+    box-shadow: none;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.25rem;
 }
 .card h2 { font-size: 1.1rem; margin-bottom: 1rem; color: var(--gray-700); }
 .card h3 { font-size: 0.95rem; margin-bottom: 0.75rem; color: var(--gray-700); }
@@ -150,6 +159,37 @@ tr:hover td { background: var(--gray-50); }
 .badge-active { background: var(--success-light); color: var(--success); }
 .badge-inactive { background: var(--danger-light); color: var(--danger); }
 .badge-suspended { background: var(--warning-light); color: var(--warning); }
+.badge-with-icon {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    vertical-align: middle;
+}
+.badge-suffix {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    margin-left: 0.15rem;
+    padding-left: 0.35rem;
+    border-left: 1px solid rgba(0, 0, 0, 0.08);
+}
+.badge-deny .badge-suffix { border-left-color: rgba(220, 38, 38, 0.2); }
+.badge-permit .badge-suffix { border-left-color: rgba(22, 163, 74, 0.2); }
+.badge-suffix-text {
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    opacity: 0.92;
+}
+
+/* ---------- Inline SVG icons ---------- */
+.ui-icon {
+    display: inline-block;
+    vertical-align: -0.15em;
+    flex-shrink: 0;
+}
+.ui-icon--sm { width: 14px; height: 14px; vertical-align: -0.1em; }
 
 /* ---------- Result Box ---------- */
 .result-box {
@@ -161,6 +201,15 @@ tr:hover td { background: var(--gray-50); }
 .result-permit { background: var(--success-light); border-color: var(--success); }
 .result-deny { background: var(--danger-light); border-color: var(--danger); }
 .result-box h3 { font-size: 1.2rem; margin-bottom: 0.5rem; }
+.result-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+    font-size: 1.05rem;
+}
+.result-permit .result-title .ui-icon { color: var(--success); }
+.result-deny .result-title .ui-icon { color: var(--danger); }
 .result-detail { font-size: 0.9rem; margin-top: 0.5rem; }
 .result-detail span { font-weight: 600; }
 
@@ -174,10 +223,11 @@ tr:hover td { background: var(--gray-50); }
 /* ---------- Stat Cards ---------- */
 .stat-card {
     text-align: center;
-    padding: 1.25rem;
+    padding: 1rem 1.25rem;
     background: white;
-    border-radius: 8px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    border-radius: 6px;
+    border: 1px solid var(--gray-200);
+    box-shadow: none;
 }
 .stat-card .value { font-size: 2rem; font-weight: 700; }
 .stat-card .label { font-size: 0.8rem; color: var(--gray-500); }
