@@ -623,14 +623,11 @@ def api_performance_run():
         if requests_pb is not None:
             requests_pb = max(10, min(2000, int(requests_pb)))
 
-        fast_mode = bool(data.get("fast_mode", True))
-
         result = run_multi_benchmark(
             preset_ids,
             scenarios,
             batches=batches,
             requests_per_batch=requests_pb,
-            fast_mode=fast_mode,
         )
         note = (data.get("note") or "").strip() or None
         try:

@@ -235,7 +235,7 @@
                     Đo <strong>evaluate_access_dynamic()</strong> trên PostgreSQL — không ghi audit/request.
                     Mỗi đợt: <span id="perf-req-hint">1000</span> cặp user/resource ngẫu nhiên ×
                     <span id="perf-batch-hint">5</span> đợt → trung bình độ trễ (ms).
-                    <br><span class="hint-security">Preset 500+ luật: chạy từng preset, giảm 100–200 yêu cầu × 3 đợt; 2.000 luật có thể &gt;1 giờ nếu dùng 1000×5×3 kịch bản.</span>
+                    <br><span class="hint-security">Phương pháp tiểu luận: 1000 yêu cầu/đợt × 5 đợt. Preset lớn chạy từng kịch bản; 2.000 luật có thể mất vài giờ.</span>
                     Cần <code>ABAC_ADMIN_TOKEN</code> (dùng chung ô khóa tab Chính sách).
                 </p>
                 <div class="admin-token-bar">
@@ -271,15 +271,6 @@
                         <label>Số đợt (lặp)</label>
                         <input type="number" id="inp-perf-batches" min="1" max="10" value="5">
                     </div>
-                </div>
-                <div style="margin-top:0.75rem;">
-                    <label class="perf-fast-toggle">
-                        <input type="checkbox" id="inp-perf-fast-mode" checked>
-                        <strong>Chế độ nhanh</strong> — preset lớn tự giảm mẫu (2.000 luật → 50×3 thay vì 1000×5)
-                    </label>
-                    <p class="hint-security" style="margin-top:0.35rem;">
-                        Bỏ tick nếu cần đúng phương pháp đầy đủ tiểu luận (có thể &gt;2 giờ với 2.000 luật × 3 kịch bản).
-                    </p>
                 </div>
                 <div style="margin-top:0.75rem;">
                     <label for="inp-perf-run-note">Ghi chú lần chạy (tuỳ chọn, lưu vào lịch sử)</label>

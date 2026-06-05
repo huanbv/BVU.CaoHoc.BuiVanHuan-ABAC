@@ -75,43 +75,6 @@ def _default_requests() -> int:
     return max(10, min(2000, int(os.getenv("ABAC_PERF_REQUESTS_PER_BATCH", "1000"))))
 
 
-def resolve_run_params(
-    preset: dict[str, Any],
-    batches: int | None,
-    requests_per_batch: int | None,
-    *,
-    fast_mode: bool = False,
-) -> tuple[int, int, str | None]:
-    """Chế độ nhanh: giảm mẫu theo quy mô luật (phù hợp preset 500–2000)."""
-    batches = batches or _default_batches()
-    requests_per_batch = requests_per_batch or _default_requests()
-    if not fast_mode:
-        return batches, requests_per_batch, None
-
-    rules = int(preset.get("rules") or 0)
-    if rules >= 2000:
-        cap_r, cap_b = 50, 3
-    elif rules >= 1000:
-        cap_r, cap_b = 100, 3
-    elif rules >= 500:
-        cap_r, cap_b = 200, 3
-    elif rules >= 200:
-        cap_r, cap_b = 300, 4
-    else:
-        return batches, requests_per_batch, None
-
-    new_r = min(requests_per_batch, cap_r)
-    new_b = min(batches, cap_b)
-    if new_r == requests_per_batch and new_b == batches:
-        return batches, requests_per_batch, None
-    return (
-        new_b,
-        new_r,
-        f"Chế độ nhanh ({preset.get('label', preset.get('id'))}): "
-        f"{new_r} yêu cầu × {new_b} đợt thay vì {requests_per_batch}×{batches}",
-    )
-
-
 def get_db_readiness() -> dict[str, Any]:
     """Kiểm tra quyền DB của user app — hiển thị trên UI trước khi seed/run."""
     row = query_one(
@@ -509,15 +472,13 @@ def run_preset_benchmark(
     *,
     batches: int | None = None,
     requests_per_batch: int | None = None,
-    fast_mode: bool = False,
 ) -> dict[str, Any]:
     preset = next((p for p in THESIS_PRESETS if p["id"] == preset_id), None)
     if not preset:
         raise ValueError(f"preset không tồn tại: {preset_id}")
 
-    batches, requests_per_batch, param_note = resolve_run_params(
-        preset, batches, requests_per_batch, fast_mode=fast_mode
-    )
+    batches = batches or _default_batches()
+    requests_per_batch = requests_per_batch or _default_requests()
 
     for sc in scenarios:
         if sc not in SCENARIOS:
@@ -582,8 +543,6 @@ def run_preset_benchmark(
             "function": "evaluate_access_dynamic",
             "batches": batches,
             "requests_per_batch": requests_per_batch,
-            "fast_mode": fast_mode,
-            "param_note": param_note,
             "eval_batch_fn": _perf_eval_batch_available(),
             "note": "Trung bình của trung bình từng đợt (pgbench-style).",
         },
@@ -599,30 +558,23 @@ def run_multi_benchmark(
     *,
     batches: int | None = None,
     requests_per_batch: int | None = None,
-    fast_mode: bool = False,
 ) -> dict[str, Any]:
     results = []
-    adjustments: list[str] = []
     for pid in preset_ids:
-        run = run_preset_benchmark(
-            pid,
-            scenarios,
-            batches=batches,
-            requests_per_batch=requests_per_batch,
-            fast_mode=fast_mode,
+        results.append(
+            run_preset_benchmark(
+                pid,
+                scenarios,
+                batches=batches,
+                requests_per_batch=requests_per_batch,
+            )
         )
-        note = (run.get("method") or {}).get("param_note")
-        if note:
-            adjustments.append(note)
-        results.append(run)
 
     return {
         "runs": results,
         "scenarios": scenarios,
         "batches": batches or _default_batches(),
         "requests_per_batch": requests_per_batch or _default_requests(),
-        "fast_mode": fast_mode,
-        "param_adjustments": adjustments,
         "perf_eval_batch_available": _perf_eval_batch_available(),
     }
 
