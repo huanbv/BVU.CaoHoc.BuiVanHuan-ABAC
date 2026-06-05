@@ -68,6 +68,14 @@ const api = async (url, opts = {}) => {
     try {
         data = text ? JSON.parse(text) : null;
     } catch {
+        if (res.status === 429) {
+            const m = text.match(/<p>([^<]+)<\/p>/i);
+            const detail = m ? m[1].trim() : '';
+            throw new Error(
+                `Quá nhiều yêu cầu (HTTP 429)${detail ? `: ${detail}` : ''}. `
+                + 'Đợi hoặc trên VPS: sudo systemctl restart abac-demo (reset bộ đếm).',
+            );
+        }
         const clip = text.length > 300 ? `${text.slice(0, 300)}…` : text;
         throw new Error(`Phản hồi không phải JSON (HTTP ${res.status}). Đầu tiên nhận được: ${clip}`);
     }

@@ -17,6 +17,7 @@ load_dotenv()
 from flask import Flask, jsonify, render_template, request
 from flask.json.provider import DefaultJSONProvider
 from flask_limiter import Limiter
+from flask_limiter.errors import RateLimitExceeded
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from database import execute, query_all, query_one
@@ -109,6 +110,21 @@ def _security_headers(response):
 @app.errorhandler(413)
 def _payload_too_large(_e):
     return jsonify({"error": "Payload quá lớn (giới hạn ABAC_MAX_BODY_BYTES)."}), 413
+
+
+@app.errorhandler(RateLimitExceeded)
+def _rate_limit_exceeded(e):
+    detail = getattr(e, "description", None) or "Giới hạn tần suất API."
+    return (
+        jsonify(
+            {
+                "error": "Quá nhiều yêu cầu (HTTP 429). Đợi một lúc hoặc khởi động lại dịch vụ.",
+                "type": "RateLimitExceeded",
+                "hint": str(detail),
+            }
+        ),
+        429,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -550,7 +566,7 @@ def api_performance_status():
 
 
 @app.route("/api/performance/seed", methods=["POST"])
-@limiter.limit("3 per hour")
+@limiter.limit(os.getenv("ABAC_PERF_SEED_LIMIT", "15 per hour"))
 def api_performance_seed():
     auth = _perf_admin_required()
     if auth is not None:
@@ -585,7 +601,7 @@ def api_performance_cleanup():
 
 
 @app.route("/api/performance/run", methods=["POST"])
-@limiter.limit("5 per hour")
+@limiter.limit(os.getenv("ABAC_PERF_RUN_LIMIT", "20 per hour"))
 def api_performance_run():
     auth = _perf_admin_required()
     if auth is not None:
