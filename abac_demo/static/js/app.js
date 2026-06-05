@@ -1031,13 +1031,26 @@ function ltSelectedConfigIds() {
 function renderLtConfigList(configs) {
     const box = document.getElementById('lt-config-list');
     if (!box) return;
-    box.innerHTML = (configs || []).map((c) => `
-        <label class="perf-preset-item">
-            <input type="checkbox" name="lt-config" value="${escHtml(c.id)}" checked>
-            <span><b>${escHtml(c.label)}</b></span>
-            <span class="perf-preset-meta">${escHtml(c.note || '')}</span>
-        </label>
-    `).join('');
+    box.innerHTML = (configs || []).map((c) => {
+        const isForecast = c.forecast || c.measured === false;
+        if (isForecast) {
+            const tps = c.tps != null ? `~${c.tps} TPS` : '';
+            const p95 = c.p95_ms != null ? `P95 ~${c.p95_ms} ms` : '';
+            const metrics = [tps, p95].filter(Boolean).join(' · ');
+            return `
+                <label class="perf-preset-item lt-config-forecast" title="Dự báo — tự thêm vào bảng kết quả sau khi đo">
+                    <input type="checkbox" name="lt-config" value="${escHtml(c.id)}" disabled>
+                    <span><b>${escHtml(c.label)}</b></span>
+                    <span class="perf-preset-meta">${escHtml(c.note || 'Dự báo')}${metrics ? ` · ${escHtml(metrics)}` : ''}</span>
+                </label>`;
+        }
+        return `
+            <label class="perf-preset-item">
+                <input type="checkbox" name="lt-config" value="${escHtml(c.id)}" checked>
+                <span><b>${escHtml(c.label)}</b></span>
+                <span class="perf-preset-meta">${escHtml(c.note || '')}</span>
+            </label>`;
+    }).join('');
 }
 
 async function loadLtStatus() {
@@ -1075,6 +1088,14 @@ document.querySelectorAll('#inp-lt-duration, #inp-lt-workers').forEach((el) => {
     });
 });
 
+function ltFormatForecastMetric(value, range) {
+    if (value == null || value === '') return '—';
+    if (Array.isArray(range) && range.length === 2) {
+        return `~${value} (${range[0]}–${range[1]})`;
+    }
+    return `~${value}`;
+}
+
 function renderLtResults(payload) {
     const tbody = document.querySelector('#tbl-lt-results tbody');
     const summary = document.getElementById('lt-results-summary');
@@ -1092,8 +1113,8 @@ function renderLtResults(payload) {
         const f = payload.forecast_row;
         rows.push(`<tr class="lt-forecast-row">
             <td>${escHtml(f.label)}</td>
-            <td>~${f.tps ?? '—'}</td>
-            <td>~${f.p95_ms ?? '—'}</td>
+            <td>${ltFormatForecastMetric(f.tps, f.tps_range)}</td>
+            <td>${ltFormatForecastMetric(f.p95_ms, f.p95_range)}</td>
             <td>${escHtml(f.note || 'Dự báo')}</td>
         </tr>`);
     }
@@ -1239,13 +1260,14 @@ async function ltRunLoadtest() {
             warmup: lastPayload?.warmup,
             table_rows: allRows,
         };
-        const forecast = ltStatusCache?.citus_forecast;
-        if (forecast) {
-            merged.forecast_row = {
-                ...forecast,
-                tps: forecast.tps,
-                p95_ms: forecast.p95_ms,
-            };
+        try {
+            merged.forecast_row = await api('/api/loadtest/forecast', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ table_rows: allRows }),
+            });
+        } catch (forecastErr) {
+            merged.forecast_warning = forecastErr.message || String(forecastErr);
         }
 
         try {
@@ -1255,6 +1277,7 @@ async function ltRunLoadtest() {
                 body: JSON.stringify({ payload: merged, note: note || undefined }),
             });
             if (saveRes.history_id) merged.history_id = saveRes.history_id;
+            if (saveRes.forecast_row) merged.forecast_row = saveRes.forecast_row;
         } catch (saveErr) {
             merged.history_save_error = saveErr.message || String(saveErr);
         }

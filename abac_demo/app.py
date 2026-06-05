@@ -22,6 +22,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 from database import execute, query_all, query_one
 from loadtest_bench import (
+    build_citus_forecast_from_table_rows,
     delete_loadtest_history,
     get_loadtest_history,
     get_status as loadtest_get_status,
@@ -728,9 +729,12 @@ def api_loadtest_run():
         return auth
     try:
         data = request.get_json(force=True) or {}
-        config_ids = data.get("config_ids") or [
-            c["id"] for c in loadtest_get_status().get("configs", [])
-        ]
+        all_configs = loadtest_get_status().get("configs", [])
+        measured_ids = {c["id"] for c in all_configs if c.get("measured", True)}
+        config_ids = data.get("config_ids") or [c["id"] for c in all_configs if c.get("measured", True)]
+        invalid = [c for c in config_ids if c not in measured_ids]
+        if invalid:
+            return jsonify({"error": f"Cấu hình không đo được: {', '.join(invalid)}"}), 400
         duration = data.get("duration_sec")
         workers = data.get("workers")
         warmup = data.get("warmup")
@@ -761,6 +765,26 @@ def api_loadtest_run():
         return _perf_error_response(exc, log_message="api_loadtest_run failed")
 
 
+@app.route("/api/loadtest/forecast", methods=["POST"])
+@limiter.limit("60 per minute")
+def api_loadtest_forecast():
+    try:
+        data = request.get_json(force=True) or {}
+        forecast = build_citus_forecast_from_table_rows(data.get("table_rows") or [])
+        if not forecast:
+            return (
+                jsonify(
+                    {
+                        "error": "Cần kết quả cấu hình partition trong table_rows để ngoại suy Citus.",
+                    }
+                ),
+                400,
+            )
+        return jsonify(forecast)
+    except Exception as exc:
+        return _perf_error_response(exc, log_message="api_loadtest_forecast failed")
+
+
 @app.route("/api/loadtest/history", methods=["GET", "POST"])
 @limiter.limit("60 per minute")
 def api_loadtest_history_list():
@@ -774,8 +798,19 @@ def api_loadtest_history_list():
             if not payload or not isinstance(payload, dict):
                 return jsonify({"error": "Thiếu payload hợp lệ."}), 400
             note = (data.get("note") or "").strip() or None
+            if not payload.get("forecast_row"):
+                forecast = build_citus_forecast_from_table_rows(
+                    payload.get("table_rows") or []
+                )
+                if forecast:
+                    payload["forecast_row"] = forecast
             history_id = save_loadtest_history(payload, note=note)
-            return jsonify({"history_id": history_id})
+            return jsonify(
+                {
+                    "history_id": history_id,
+                    "forecast_row": payload.get("forecast_row"),
+                }
+            )
         except Exception as exc:
             return _perf_error_response(exc, log_message="api_loadtest_history_save failed")
     try:

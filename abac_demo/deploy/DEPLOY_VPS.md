@@ -148,7 +148,28 @@ source venv/bin/activate && set -a && source /etc/abac-app.env && set +a
 python scripts/run_loadtest_cli.py --duration 30 --workers 4 --save --note "Bảng 11"
 ```
 
-- Biến: `ABAC_LOADTEST_DURATION_SEC` (30), `ABAC_LOADTEST_WORKERS` (4), `ABAC_LOADTEST_RUN_LIMIT` (10/hour).
+- Biến load test: `ABAC_LOADTEST_DURATION_SEC` (30), `ABAC_LOADTEST_WORKERS` (4), `ABAC_LOADTEST_RUN_LIMIT` (10/hour).
+- **Ngoại suy Citus (dòng dự báo Bảng 11)** — tính từ kết quả đo `partition`:
+
+| Biến | Mặc định | Ý nghĩa |
+|------|----------|---------|
+| `ABAC_CITUS_TPS_FACTOR_LO` | 1.5 | Hệ số TPS tối thiểu (× partition TPS) |
+| `ABAC_CITUS_TPS_FACTOR_HI` | 2.0 | Hệ số TPS tối đa |
+| `ABAC_CITUS_P95_FACTOR_LO` | 0.60 | P95 tối thiểu (= giảm ~40%) |
+| `ABAC_CITUS_P95_FACTOR_HI` | 0.70 | P95 tối đa (= giảm ~30%) |
+
+Mẫu đầy đủ: `deploy/abac-app.env.example`. Chỉ block Citus: `deploy/env/citus-forecast.env.snippet`.
+
+Sau `git pull`, trên VPS (một lần hoặc khi thêm biến mới):
+
+```bash
+cd /var/www/abac/abac_demo
+# Nếu chưa có 4 dòng Citus trong /etc/abac-app.env:
+grep -q ABAC_CITUS_TPS_FACTOR_LO /etc/abac-app.env 2>/dev/null || \
+  sudo bash -c 'grep -v "^#" deploy/env/citus-forecast.env.snippet | grep -v "^$" >> /etc/abac-app.env'
+sudo systemctl restart abac-demo
+```
+
 - Nginx: `proxy_read_timeout 900s` cho `/api/loadtest/` (cùng rule với `/api/performance/`).
 
 ## Notes

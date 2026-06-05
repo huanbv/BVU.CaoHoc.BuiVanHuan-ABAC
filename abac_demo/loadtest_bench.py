@@ -43,15 +43,73 @@ LOADTEST_CONFIGS: list[dict[str, Any]] = [
     },
 ]
 
+PARTITION_CONFIG_ID = "partition"
+
+# Hệ số ngoại suy Citus 2 node (giả định bảo thủ, tham chiếu xu hướng [5])
+_CITUS_TPS_FACTOR_LO = float(os.getenv("ABAC_CITUS_TPS_FACTOR_LO", "1.5"))
+_CITUS_TPS_FACTOR_HI = float(os.getenv("ABAC_CITUS_TPS_FACTOR_HI", "2.0"))
+_CITUS_P95_FACTOR_LO = float(os.getenv("ABAC_CITUS_P95_FACTOR_LO", "0.60"))  # giảm 40%
+_CITUS_P95_FACTOR_HI = float(os.getenv("ABAC_CITUS_P95_FACTOR_HI", "0.70"))  # giảm 30%
+
 CITUS_FORECAST: dict[str, Any] = {
     "id": "citus",
     "label": "+ Sharding 2 node (Citus) — dự báo",
-    "note": "Ngoại suy từ [5]",
+    "note": "Tính sau khi đo partition: ×1,5–2 TPS, −30–40% P95; tham chiếu [5]",
     "measured": False,
     "forecast": True,
-    "tps": 4900,
-    "p95_ms": 48,
+    "tps": None,
+    "p95_ms": None,
 }
+
+
+def compute_citus_forecast(partition_tps: float, partition_p95_ms: float) -> dict[str, Any]:
+    """Ngoại suy dòng Citus từ kết quả đo cấu hình partition (mục 3.2.3 / Bảng 11)."""
+    tps_lo = partition_tps * _CITUS_TPS_FACTOR_LO
+    tps_hi = partition_tps * _CITUS_TPS_FACTOR_HI
+    tps_mid = round((tps_lo + tps_hi) / 2)
+
+    p95_lo = partition_p95_ms * _CITUS_P95_FACTOR_LO
+    p95_hi = partition_p95_ms * _CITUS_P95_FACTOR_HI
+    p95_mid = round((p95_lo + p95_hi) / 2)
+
+    return {
+        **CITUS_FORECAST,
+        "tps": tps_mid,
+        "p95_ms": p95_mid,
+        "tps_range": [round(tps_lo), round(tps_hi)],
+        "p95_range": [round(p95_lo), round(p95_hi)],
+        "basis": {
+            "config_id": PARTITION_CONFIG_ID,
+            "tps": partition_tps,
+            "p95_ms": partition_p95_ms,
+        },
+        "formula": {
+            "tps": f"partition_TPS × [{_CITUS_TPS_FACTOR_LO} … {_CITUS_TPS_FACTOR_HI}]",
+            "p95_ms": f"partition_P95 × [{_CITUS_P95_FACTOR_LO} … {_CITUS_P95_FACTOR_HI}] (−30–40%)",
+            "reference": "[5]",
+        },
+        "note": (
+            f"Ngoại suy từ partition (TPS={partition_tps:g}, P95={partition_p95_ms:g} ms): "
+            f"×{_CITUS_TPS_FACTOR_LO:g}–{_CITUS_TPS_FACTOR_HI:g} TPS, "
+            f"−30–40% P95; tham chiếu [5]"
+        ),
+    }
+
+
+def build_citus_forecast_from_table_rows(
+    table_rows: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    part = next(
+        (r for r in table_rows if r.get("config_id") == PARTITION_CONFIG_ID),
+        None,
+    )
+    if not part:
+        return None
+    tps = part.get("tps")
+    p95 = part.get("p95_ms")
+    if tps is None or p95 is None:
+        return None
+    return compute_citus_forecast(float(tps), float(p95))
 
 
 def _default_duration() -> int:
@@ -118,7 +176,7 @@ def get_status() -> dict[str, Any]:
             "workers": _default_workers(),
             "warmup_requests": _default_warmup(),
         },
-        "configs": LOADTEST_CONFIGS,
+        "configs": [*LOADTEST_CONFIGS, CITUS_FORECAST],
         "citus_forecast": CITUS_FORECAST,
     }
 
@@ -325,11 +383,9 @@ def run_multi_loadtest(
         "table_rows": _build_table_rows(results),
     }
     if include_citus_forecast:
-        payload["forecast_row"] = {
-            **CITUS_FORECAST,
-            "tps": CITUS_FORECAST["tps"],
-            "p95_ms": CITUS_FORECAST["p95_ms"],
-        }
+        forecast = build_citus_forecast_from_table_rows(payload["table_rows"])
+        if forecast:
+            payload["forecast_row"] = forecast
     return payload
 
 
