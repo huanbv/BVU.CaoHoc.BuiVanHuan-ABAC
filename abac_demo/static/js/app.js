@@ -482,15 +482,31 @@ async function loadPerfStatus() {
     const st = await api('/api/performance/status');
     const c = st.counts || {};
     const el = document.getElementById('perf-status');
+    const rd = st.readiness || {};
+    const sess = rd.session || {};
     if (el) {
+        const seedOk = rd.ready_for_seed ? 'OK' : 'THIẾU QUYỀN';
+        const runOk = rd.ready_for_run ? 'OK' : 'CHƯA SẴN SÀNG';
+        const seedClass = rd.ready_for_seed ? 'perf-ok' : 'perf-bad';
+        const runClass = rd.ready_for_run ? 'perf-ok' : 'perf-bad';
         el.innerHTML = `
+            <div><b>DB user (config):</b> ${escHtml(rd.configured_db_user || '—')}
+            · <b>session:</b> ${escHtml(sess.db_session_user || '—')}</div>
+            <div><b>Seed:</b> <span class="${seedClass}">${seedOk}</span>
+            · INSERT policies: ${sess.can_insert_policies ? 'yes' : 'no'}
+            · audit_logs: ${sess.can_insert_audit ? 'yes' : 'no'}
+            · EAV: ${sess.can_insert_eav ? 'yes' : 'no'}</div>
+            <div><b>Run benchmark:</b> <span class="${runClass}">${runOk}</span>
+            · PDP execute: ${sess.can_execute_pdp ? 'yes' : 'no'}
+            · perf_index_functions: ${rd.perf_index_functions_installed ? 'yes' : 'no'}</div>
             <div><b>Luật đang bật:</b> ${Number(c.enabled_policies || 0).toLocaleString('vi-VN')}
             (PERF_BENCH: ${Number(c.bench_policies || 0).toLocaleString('vi-VN')})</div>
-            <div><b>EAV (user_attributes):</b> ${Number(c.total_eav || 0).toLocaleString('vi-VN')}
+            <div><b>EAV:</b> ${Number(c.total_eav || 0).toLocaleString('vi-VN')}
             (PERF_BENCH: ${Number(c.bench_eav || 0).toLocaleString('vi-VN')})</div>
             <div><b>Users / Resources:</b> ${Number(c.users || 0).toLocaleString('vi-VN')} /
             ${Number(c.resources || 0).toLocaleString('vi-VN')}</div>
-            <div><b>Index PDP đang có:</b> ${(st.active_perf_indexes || []).join(', ') || '—'}</div>
+            <div><b>Index PDP:</b> ${(st.active_perf_indexes || []).join(', ') || '—'}</div>
+            ${!rd.ready_for_seed ? '<div class="perf-bad">Chạy trên VPS: sudo -u postgres psql -d abac_demo -f scripts/perf_grants_abac_user.sql và perf_index_functions.sql</div>' : ''}
         `;
     }
     const defs = st.defaults || {};

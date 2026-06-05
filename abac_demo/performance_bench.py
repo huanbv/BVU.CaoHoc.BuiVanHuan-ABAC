@@ -13,7 +13,7 @@ import random
 import time
 from typing import Any
 
-from database import execute, get_connection, query_all, query_one
+from database import DB_CONFIG, execute, get_connection, query_all, query_one
 
 # Chỉ mục PDP/EAV theo tiểu luận (tên cố định để DROP/CREATE)
 IDX_USER_ATTR_KEY = "idx_user_attrs_key"
@@ -73,6 +73,46 @@ def _default_requests() -> int:
     return max(10, min(2000, int(os.getenv("ABAC_PERF_REQUESTS_PER_BATCH", "1000"))))
 
 
+def get_db_readiness() -> dict[str, Any]:
+    """Kiểm tra quyền DB của user app — hiển thị trên UI trước khi seed/run."""
+    row = query_one(
+        """
+        SELECT
+            current_user AS db_session_user,
+            has_table_privilege(current_user, 'policies', 'INSERT') AS can_insert_policies,
+            has_table_privilege(current_user, 'policies', 'DELETE') AS can_delete_policies,
+            has_table_privilege(current_user, 'policy_conditions', 'INSERT') AS can_insert_conditions,
+            has_table_privilege(current_user, 'user_attributes', 'INSERT') AS can_insert_eav,
+            has_table_privilege(current_user, 'audit_logs', 'INSERT') AS can_insert_audit,
+            has_function_privilege(
+                current_user,
+                'evaluate_access_dynamic(integer,integer,text,text,text,integer,text)',
+                'EXECUTE'
+            ) AS can_execute_pdp
+        """
+    )
+    return {
+        "configured_db_user": DB_CONFIG.get("user"),
+        "session": row,
+        "perf_index_functions_installed": _perf_index_helpers_available(),
+        "ready_for_seed": bool(
+            row
+            and row.get("can_insert_policies")
+            and row.get("can_insert_conditions")
+            and row.get("can_insert_eav")
+            and row.get("can_insert_audit")
+        ),
+        "ready_for_run": bool(
+            row
+            and row.get("can_execute_pdp")
+            and (
+                _perf_index_helpers_available()
+                or row.get("can_insert_policies")  # owner có thể DDL trực tiếp
+            )
+        ),
+    }
+
+
 def get_status() -> dict[str, Any]:
     counts = query_one(
         """
@@ -106,6 +146,7 @@ def get_status() -> dict[str, Any]:
     )
     return {
         "counts": counts,
+        "readiness": get_db_readiness(),
         "active_perf_indexes": [r["indexname"] for r in indexes],
         "defaults": {
             "batches": _default_batches(),
@@ -296,8 +337,8 @@ def seed_benchmark_scale(rules: int, eav_rows: int) -> dict[str, Any]:
                 u.user_id,
                 '{BENCH_ATTR_PREFIX}' || ((gs %% 50) + 1)::TEXT,
                 'bench_value',
-                NOW() - ((gs %% 365) || ' days')::INTERVAL,
-                CASE WHEN gs %% 17 = 0 THEN NOW() - INTERVAL '1 day' ELSE NULL END
+                TIMESTAMPTZ '2020-01-01' + (gs * INTERVAL '1 millisecond'),
+                CASE WHEN gs %% 17 = 0 THEN TIMESTAMPTZ '2019-12-31' ELSE NULL END
             FROM generate_series(1, %s) AS gs
             JOIN LATERAL (
                 SELECT user_id

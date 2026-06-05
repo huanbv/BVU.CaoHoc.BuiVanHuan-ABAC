@@ -278,6 +278,8 @@ tr:hover td { background: var(--gray-50); }
     font-size: 0.85rem;
 }
 .perf-results-table td:nth-child(3) { font-variant-numeric: tabular-nums; }
+.perf-ok { color: var(--success); font-weight: 600; }
+.perf-bad { color: var(--danger); font-weight: 600; font-size: 0.85rem; }
 
 /* ---------- Pager (PIP tables) ---------- */
 .pager-toolbar {

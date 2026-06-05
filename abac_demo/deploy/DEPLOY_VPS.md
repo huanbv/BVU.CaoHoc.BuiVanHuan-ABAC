@@ -121,8 +121,9 @@ Gợi ý thêm tại Nginx: `limit_req` cho `location /api/`, HSTS sau khi có H
 
 ```bash
 cd /var/www/abac/abac_demo
-psql -U postgres -d abac_demo -v app_user=abac_user -v ON_ERROR_STOP=1 -f scripts/fix_app_db_privileges.sql
-psql -U postgres -d abac_demo -v app_user=abac_user -v ON_ERROR_STOP=1 -f scripts/perf_index_functions.sql
+# Ubuntu: phải chạy psql bằng user hệ thống postgres (không chạy psql -U postgres khi đang root)
+sudo -u postgres psql -d abac_demo -v ON_ERROR_STOP=1 -f scripts/perf_grants_abac_user.sql
+sudo -u postgres psql -d abac_demo -v app_user=abac_user -v ON_ERROR_STOP=1 -f scripts/perf_index_functions.sql
 ```
 
 (`app_user` = `DB_USER` trong `/etc/abac-app.env`.)
