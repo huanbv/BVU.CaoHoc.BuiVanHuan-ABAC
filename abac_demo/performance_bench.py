@@ -366,47 +366,63 @@ def seed_benchmark_scale(rules: int, eav_rows: int) -> dict[str, Any]:
 
 
 def _random_pairs(requests: int) -> list[tuple[int, int]]:
+    """Lấy cặp user/resource ngẫu nhiên nhanh (không ORDER BY random() trên 250k dòng)."""
     rows = query_all(
         """
-        WITH u AS (
-            SELECT user_id, row_number() OVER () AS rn
-            FROM (SELECT user_id FROM users ORDER BY random() LIMIT %s) s
+        WITH ub AS (
+            SELECT MIN(user_id) AS min_id, MAX(user_id) AS max_id, COUNT(*)::bigint AS cnt
+            FROM users
         ),
-        r AS (
-            SELECT resource_id, row_number() OVER () AS rn
-            FROM (SELECT resource_id FROM resources ORDER BY random() LIMIT %s) s
+        rb AS (
+            SELECT MIN(resource_id) AS min_id, MAX(resource_id) AS max_id, COUNT(*)::bigint AS cnt
+            FROM resources
+        ),
+        picks AS (
+            SELECT
+                gs,
+                (ub.min_id + floor(random() * GREATEST(ub.max_id - ub.min_id + 1, 1)))::int AS uid_guess,
+                (rb.min_id + floor(random() * GREATEST(rb.max_id - rb.min_id + 1, 1)))::int AS rid_guess
+            FROM generate_series(1, %s) AS gs
+            CROSS JOIN ub
+            CROSS JOIN rb
         )
         SELECT u.user_id, r.resource_id
-        FROM u
-        JOIN r ON u.rn = r.rn
+        FROM picks p
+        JOIN users u ON u.user_id = p.uid_guess
+        JOIN resources r ON r.resource_id = p.rid_guess
         """,
-        (requests, requests),
+        (requests,),
     )
-    if len(rows) < requests:
+    if len(rows) < max(1, requests // 2):
         raise RuntimeError(
-            f"Không đủ users/resources để lấy {requests} cặp ngẫu nhiên "
-            f"(có {len(rows)} cặp)."
+            f"Không lấy đủ cặp user/resource ngẫu nhiên ({len(rows)}/{requests}). "
+            "Kiểm tra dữ liệu users/resources."
         )
     return [(int(r["user_id"]), int(r["resource_id"])) for r in rows]
 
 
 def _run_eval_batch(pairs: list[tuple[int, int]]) -> list[float]:
-    """Trả về danh sách evaluation_time_ms từ PDP (ms)."""
+    """Trả về danh sách độ trễ PDP (ms) — ưu tiên evaluation_time_ms từ DB, fallback đo wall-clock."""
     times: list[float] = []
     sql = """
         SELECT evaluation_time_ms
         FROM evaluate_access_dynamic(
             %s, %s, 'read', 'medium', 'internal', %s, 'normal'
         )
+        LIMIT 1
     """
     with get_connection() as conn:
         with conn.cursor() as cur:
             for uid, rid in pairs:
                 hour = random.randint(0, 23)
+                t0 = time.perf_counter()
                 cur.execute(sql, (uid, rid, hour))
                 row = cur.fetchone()
+                wall_ms = (time.perf_counter() - t0) * 1000.0
                 if row and row[0] is not None:
                     times.append(float(row[0]))
+                elif wall_ms > 0:
+                    times.append(round(wall_ms, 2))
     return times
 
 

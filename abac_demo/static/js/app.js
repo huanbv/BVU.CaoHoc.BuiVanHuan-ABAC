@@ -454,6 +454,7 @@ const PERF_SCENARIO_LABELS = {
 };
 
 let perfPresetsCache = [];
+const PERF_RESULTS_SS_KEY = 'abac_perf_last_results';
 
 function perfSelectedPresetIds() {
     return [...document.querySelectorAll('input[name="perf-preset"]:checked')]
@@ -519,6 +520,7 @@ async function loadPerfStatus() {
     if (rh) rh.textContent = reqInp?.value || '1000';
     if (bh) bh.textContent = batInp?.value || '5';
     renderPerfPresets(st.presets || []);
+    restorePerfResultsFromStorage();
 }
 
 document.querySelectorAll('#inp-perf-requests, #inp-perf-batches').forEach((el) => {
@@ -573,8 +575,10 @@ async function perfCleanup() {
 
 function renderPerfResults(runPayload) {
     const tbody = document.querySelector('#tbl-perf-results tbody');
+    const summary = document.getElementById('perf-results-summary');
     if (!tbody) return;
     const rows = [];
+    let rowCount = 0;
     (runPayload.runs || []).forEach((run) => {
         const preset = run.preset || {};
         const scenarios = run.scenarios || {};
@@ -583,6 +587,7 @@ function renderPerfResults(runPayload) {
             const measured = s.avg_ms;
             const thesis = s.thesis_ms;
             const ratio = s.ratio_vs_thesis != null ? `${s.ratio_vs_thesis}×` : '—';
+            rowCount += 1;
             rows.push(`<tr>
                 <td>${escHtml(preset.label || preset.id)}</td>
                 <td>${escHtml(PERF_SCENARIO_LABELS[sc] || sc)}</td>
@@ -592,7 +597,36 @@ function renderPerfResults(runPayload) {
             </tr>`);
         });
     });
-    tbody.innerHTML = rows.join('') || '<tr><td colspan="5">Chưa có kết quả</td></tr>';
+    tbody.innerHTML = rows.join('') || '<tr><td colspan="5">Chưa có kết quả — có thể request bị timeout trước khi server trả JSON.</td></tr>';
+    if (summary) {
+        const savedAt = runPayload.saved_at
+            ? new Date(runPayload.saved_at).toLocaleString('vi-VN')
+            : new Date().toLocaleString('vi-VN');
+        summary.textContent = rowCount
+            ? `${rowCount} dòng kết quả · lưu lúc ${savedAt}`
+            : 'Chưa có dòng kết quả. Thử giảm số yêu cầu/đợt hoặc tăng timeout Gunicorn/Nginx.';
+    }
+    document.getElementById('perf-results-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return rowCount;
+}
+
+function savePerfResults(runPayload) {
+    try {
+        const payload = { ...runPayload, saved_at: new Date().toISOString() };
+        sessionStorage.setItem(PERF_RESULTS_SS_KEY, JSON.stringify(payload));
+    } catch {
+        /* ignore quota */
+    }
+}
+
+function restorePerfResultsFromStorage() {
+    try {
+        const raw = sessionStorage.getItem(PERF_RESULTS_SS_KEY);
+        if (!raw) return;
+        renderPerfResults(JSON.parse(raw));
+    } catch {
+        /* ignore */
+    }
 }
 
 async function perfRunBenchmark() {
@@ -631,8 +665,11 @@ async function perfRunBenchmark() {
             }),
         });
         const totalSec = (data.runs || []).reduce((s, r) => s + (r.elapsed_sec || 0), 0);
-        prog.textContent = `Hoàn tất (${data.runs?.length || 0} preset, ~${totalSec}s).`;
-        renderPerfResults(data);
+        savePerfResults(data);
+        const rowCount = renderPerfResults(data);
+        prog.textContent = rowCount
+            ? `Hoàn tất: ${rowCount} dòng kết quả (${data.runs?.length || 0} preset, ~${totalSec}s). Cuộn xuống bảng bên dưới.`
+            : `Server trả về nhưng không có dòng kết quả (~${totalSec}s). Kiểm tra timeout hoặc giảm 1000×5.`;
         loadPerfStatus();
     } catch (e) {
         prog.textContent = e.message || String(e);

@@ -128,7 +128,8 @@ sudo -u postgres psql -d abac_demo -v app_user=abac_user -v ON_ERROR_STOP=1 -f s
 
 (`app_user` = `DB_USER` trong `/etc/abac-app.env`.)
 - Biến tùy chọn: `ABAC_PERF_BATCHES` (mặc định 5), `ABAC_PERF_REQUESTS_PER_BATCH` (mặc định 1000).
-- Quy trình: **Seed preset** (một lần) → chọn preset + kịch bản → **Chạy benchmark**. Preset lớn (2.000 luật / 500k EAV) có thể mất nhiều phút; tăng timeout Gunicorn/nginx nếu HTTP bị cắt.
+- **Timeout:** Gunicorn mặc định 30s sẽ cắt benchmark → UI không nhận JSON. Thêm `--timeout 900` vào `ExecStart` (xem `deploy/systemd/abac-demo.service.example`). Nginx: `proxy_read_timeout 900s` cho `/api/performance/` (xem `deploy/nginx/abac.thehuan.com.conf`).
+- Quy trình: **Seed preset** → **Chạy benchmark**. Lần đầu thử **100 yêu cầu × 3 đợt × 1 kịch bản** để xác nhận bảng kết quả hiện.
 
 ## Notes
 
