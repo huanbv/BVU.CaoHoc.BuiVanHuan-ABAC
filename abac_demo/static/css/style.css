@@ -241,6 +241,44 @@ tr:hover td { background: var(--gray-50); }
 .admin-token-bar { margin-bottom: 1rem; max-width: 32rem; }
 .admin-token-bar label code { font-size: 0.75rem; }
 
+/* ---------- Performance benchmark tab ---------- */
+.perf-status {
+    font-size: 0.85rem;
+    color: var(--gray-700);
+    line-height: 1.5;
+    padding: 0.75rem;
+    background: var(--gray-50);
+    border: 1px solid var(--gray-200);
+    border-radius: 6px;
+}
+.perf-check-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+    font-size: 0.9rem;
+}
+.perf-preset-item {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--gray-200);
+    border-radius: 6px;
+    min-width: 12rem;
+    cursor: pointer;
+}
+.perf-preset-meta { font-size: 0.75rem; color: var(--gray-500); }
+.perf-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
+.perf-progress {
+    margin-top: 0.75rem;
+    padding: 0.75rem;
+    background: var(--primary-light);
+    color: var(--gray-700);
+    border-radius: 6px;
+    font-size: 0.85rem;
+}
+.perf-results-table td:nth-child(3) { font-variant-numeric: tabular-nums; }
+
 /* ---------- Pager (PIP tables) ---------- */
 .pager-toolbar {
     display: flex;

@@ -20,6 +20,7 @@
         <div class="tab" data-tab="data">Người dùng & Tài nguyên</div>
         <div class="tab" data-tab="policies">Chính sách</div>
         <div class="tab" data-tab="audit">Nhật ký kiểm toán</div>
+        <div class="tab" data-tab="performance">Hiệu năng PDP</div>
     </div>
 
     <div class="content">
@@ -223,6 +224,79 @@
                     <thead><tr><th>User ID</th><th>Họ tên</th><th>Cơ quan</th><th>Tổng request</th><th>Deny</th><th>Tỷ lệ deny</th><th>Mức rủi ro</th></tr></thead>
                     <tbody></tbody>
                 </table></div>
+            </div>
+        </div>
+
+        <!-- TAB 5: PERFORMANCE (3.2.2) -->
+        <div id="panel-performance" class="panel">
+            <div class="card">
+                <h2>Đánh giá hiệu năng PDP (mục 3.2.2)</h2>
+                <p class="hint-security">
+                    Đo <strong>evaluate_access_dynamic()</strong> trên PostgreSQL — không ghi audit/request.
+                    Mỗi đợt: <span id="perf-req-hint">1000</span> cặp user/resource ngẫu nhiên ×
+                    <span id="perf-batch-hint">5</span> đợt → trung bình độ trễ (ms).
+                    Cần <code>ABAC_ADMIN_TOKEN</code> (dùng chung ô khóa tab Chính sách).
+                </p>
+                <div class="admin-token-bar">
+                    <label for="inp-perf-admin-token">Khóa quản trị</label>
+                    <input type="password" id="inp-perf-admin-token" autocomplete="off" spellcheck="false"
+                        placeholder="Bắt buộc để seed / chạy benchmark">
+                </div>
+                <div id="perf-status" class="perf-status"></div>
+            </div>
+
+            <div class="card">
+                <h3>Quy mô dữ liệu (preset tiểu luận)</h3>
+                <div id="perf-preset-list" class="perf-check-grid"></div>
+                <div class="perf-actions">
+                    <button type="button" class="btn btn-sm btn-primary" onclick="perfSeedSelected()">Seed preset đã chọn</button>
+                    <button type="button" class="btn btn-sm" onclick="perfCleanup()">Xóa dữ liệu PERF_BENCH</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>Kịch bản chỉ mục (chọn một hoặc cả ba để so sánh)</h3>
+                <div class="perf-check-grid" id="perf-scenario-list">
+                    <label><input type="checkbox" name="perf-scenario" value="none" checked> Không index</label>
+                    <label><input type="checkbox" name="perf-scenario" value="btree" checked> B-Tree (attr_key, valid_from/valid_to)</label>
+                    <label><input type="checkbox" name="perf-scenario" value="btree_partial" checked> B-Tree + Partial (policies is_enabled)</label>
+                </div>
+                <div class="grid-2" style="margin-top:0.75rem;">
+                    <div>
+                        <label>Số yêu cầu / đợt</label>
+                        <input type="number" id="inp-perf-requests" min="10" max="2000" value="1000">
+                    </div>
+                    <div>
+                        <label>Số đợt (lặp)</label>
+                        <input type="number" id="inp-perf-batches" min="1" max="10" value="5">
+                    </div>
+                </div>
+                <div class="perf-actions">
+                    <button type="button" class="btn btn-primary" onclick="perfRunBenchmark()">Chạy benchmark đã chọn</button>
+                    <button type="button" class="btn btn-sm" onclick="loadPerfStatus()">Làm mới trạng thái</button>
+                </div>
+                <div id="perf-progress" class="perf-progress" style="display:none;"></div>
+            </div>
+
+            <div class="card">
+                <h3>Kết quả đo thực tế</h3>
+                <div style="overflow-x:auto;">
+                    <table id="tbl-perf-results" class="perf-results-table">
+                        <thead>
+                            <tr>
+                                <th>Quy mô</th>
+                                <th>Kịch bản</th>
+                                <th>Đo được (ms)</th>
+                                <th>Tiểu luận (ms)</th>
+                                <th>Tỷ lệ</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <p class="hint-security" style="margin-top:0.75rem;">
+                    Số “Tiểu luận” là tham chiếu Bảng 10 — chỉ để đối chiếu; số “Đo được” là kết quả chạy trên DB hiện tại.
+                </p>
             </div>
         </div>
     </div>

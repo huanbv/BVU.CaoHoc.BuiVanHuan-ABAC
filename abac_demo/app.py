@@ -20,6 +20,14 @@ from flask_limiter import Limiter
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from database import execute, query_all, query_one
+from performance_bench import (
+    THESIS_PRESETS,
+    cleanup_benchmark_seed,
+    get_status as perf_get_status,
+    restore_production_indexes,
+    run_multi_benchmark,
+    seed_benchmark_scale,
+)
 from security import (
     admin_token_configured,
     api_error_response,
@@ -490,6 +498,105 @@ def api_audit_stats():
         )
     except Exception as exc:
         return api_error_response(app, exc, log_message="api_audit_stats failed")
+
+
+# ---------------------------------------------------------------------------
+# API: Performance benchmark (PDP — mục 3.2.2 tiểu luận)
+# ---------------------------------------------------------------------------
+def _perf_admin_required():
+    if not admin_token_configured():
+        return (
+            jsonify(
+                {
+                    "error": "Cần đặt ABAC_ADMIN_TOKEN trên server để chạy benchmark (DROP/CREATE index).",
+                }
+            ),
+            503,
+        )
+    return verify_admin_request()
+
+
+@app.route("/api/performance/status")
+@limiter.limit("60 per minute")
+def api_performance_status():
+    try:
+        return jsonify(perf_get_status())
+    except Exception as exc:
+        return api_error_response(app, exc, log_message="api_performance_status failed")
+
+
+@app.route("/api/performance/seed", methods=["POST"])
+@limiter.limit("3 per hour")
+def api_performance_seed():
+    auth = _perf_admin_required()
+    if auth is not None:
+        return auth
+    try:
+        data = request.get_json(force=True) or {}
+        preset_id = data.get("preset_id")
+        if preset_id:
+            preset = next((p for p in THESIS_PRESETS if p["id"] == preset_id), None)
+            if not preset:
+                return jsonify({"error": f"preset_id không hợp lệ: {preset_id}"}), 400
+            rules, eav = preset["rules"], preset["eav_rows"]
+        else:
+            rules = int(data.get("rules", 50))
+            eav = int(data.get("eav_rows", 1000))
+        return jsonify(seed_benchmark_scale(rules, eav))
+    except Exception as exc:
+        return api_error_response(app, exc, log_message="api_performance_seed failed")
+
+
+@app.route("/api/performance/cleanup", methods=["POST"])
+@limiter.limit("10 per hour")
+def api_performance_cleanup():
+    auth = _perf_admin_required()
+    if auth is not None:
+        return auth
+    try:
+        restore_production_indexes()
+        return jsonify(cleanup_benchmark_seed())
+    except Exception as exc:
+        return api_error_response(app, exc, log_message="api_performance_cleanup failed")
+
+
+@app.route("/api/performance/run", methods=["POST"])
+@limiter.limit("5 per hour")
+def api_performance_run():
+    auth = _perf_admin_required()
+    if auth is not None:
+        return auth
+    try:
+        data = request.get_json(force=True) or {}
+        preset_ids = data.get("preset_ids") or []
+        if not preset_ids and data.get("preset_id"):
+            preset_ids = [data["preset_id"]]
+        if not preset_ids:
+            return jsonify({"error": "Cần preset_id hoặc preset_ids."}), 400
+
+        scenarios = data.get("scenarios") or ["none", "btree", "btree_partial"]
+        batches = data.get("batches")
+        requests_pb = data.get("requests_per_batch")
+
+        if batches is not None:
+            batches = max(1, min(10, int(batches)))
+        if requests_pb is not None:
+            requests_pb = max(10, min(2000, int(requests_pb)))
+
+        return jsonify(
+            run_multi_benchmark(
+                preset_ids,
+                scenarios,
+                batches=batches,
+                requests_per_batch=requests_pb,
+            )
+        )
+    except Exception as exc:
+        try:
+            restore_production_indexes()
+        except Exception:
+            app.logger.exception("restore indexes after failed benchmark")
+        return api_error_response(app, exc, log_message="api_performance_run failed")
 
 
 # ---------------------------------------------------------------------------

@@ -114,6 +114,13 @@ Demo vẫn cho phép mọi người gọi API đọc / kiểm tra PEP; các lớ
 
 Gợi ý thêm tại Nginx: `limit_req` cho `location /api/`, HSTS sau khi có HTTPS, và chỉ mở cổng 80/443. Với nhiều bản ghi `access_requests`, tạo chỉ mục ví dụ `CREATE INDEX IF NOT EXISTS idx_access_requests_time ON access_requests (request_time DESC);` giúp cửa sổ thời gian nhanh hơn.
 
+## Tab Hiệu năng PDP (mục 3.2.2 tiểu luận)
+
+- UI: tab **Hiệu năng PDP** — đo `evaluate_access_dynamic()` thực tế, so 3 kịch bản index, đối chiếu Bảng 10 tiểu luận.
+- Bắt buộc **`ABAC_ADMIN_TOKEN`** (DROP/CREATE index). User DB cần quyền `CREATE` trên bảng `user_attributes`, `policies` (thường owner `abac_user` hoặc chạy benchmark bằng superuser).
+- Biến tùy chọn: `ABAC_PERF_BATCHES` (mặc định 5), `ABAC_PERF_REQUESTS_PER_BATCH` (mặc định 1000).
+- Quy trình: **Seed preset** (một lần) → chọn preset + kịch bản → **Chạy benchmark**. Preset lớn (2.000 luật / 500k EAV) có thể mất nhiều phút; tăng timeout Gunicorn/nginx nếu HTTP bị cắt.
+
 ## Notes
 
 - Production stack binds app to `127.0.0.1:5000`; public access should go through Nginx only.

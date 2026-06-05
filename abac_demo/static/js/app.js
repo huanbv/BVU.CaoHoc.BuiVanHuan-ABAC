@@ -47,6 +47,7 @@ document.querySelectorAll('.tab').forEach(tab => {
         if (tab.dataset.tab === 'data') loadData();
         if (tab.dataset.tab === 'policies') loadPolicies();
         if (tab.dataset.tab === 'audit') { loadAuditLogs(); loadAuditStats(); }
+        if (tab.dataset.tab === 'performance') loadPerfStatus();
     });
 });
 
@@ -84,16 +85,41 @@ function statusBadge(s) {
     return `<span class="badge badge-${s}">${s}</span>`;
 }
 
-(function initAdminTokenField() {
-    const el = document.getElementById('inp-admin-token');
+function getAdminToken() {
+    const ids = ['inp-perf-admin-token', 'inp-admin-token'];
+    for (const id of ids) {
+        const el = document.getElementById(id);
+        const v = (el?.value || '').trim();
+        if (v) return v;
+    }
+    return (sessionStorage.getItem(ABAC_ADMIN_SS_KEY) || '').trim();
+}
+
+function bindAdminTokenInput(id) {
+    const el = document.getElementById(id);
     if (!el) return;
     el.value = sessionStorage.getItem(ABAC_ADMIN_SS_KEY) || '';
     el.addEventListener('change', () => {
         const v = el.value.trim();
         if (v) sessionStorage.setItem(ABAC_ADMIN_SS_KEY, v);
         else sessionStorage.removeItem(ABAC_ADMIN_SS_KEY);
+        document.querySelectorAll('#inp-admin-token, #inp-perf-admin-token').forEach((inp) => {
+            if (inp && inp !== el) inp.value = v;
+        });
     });
+}
+
+(function initAdminTokenFields() {
+    bindAdminTokenInput('inp-admin-token');
+    bindAdminTokenInput('inp-perf-admin-token');
 })();
+
+const apiAdmin = async (url, opts = {}) => {
+    const tok = getAdminToken();
+    const headers = { ...(opts.headers || {}) };
+    if (tok) headers['X-Abac-Admin-Token'] = tok;
+    return api(url, { ...opts, headers });
+};
 
 // ============================================================
 // PAGINATION STATE (PIP tables)
@@ -347,11 +373,7 @@ async function loadPolicies() {
 }
 
 async function togglePolicy(id) {
-    const inp = document.getElementById('inp-admin-token');
-    const tok = (inp?.value || sessionStorage.getItem(ABAC_ADMIN_SS_KEY) || '').trim();
-    const headers = {};
-    if (tok) headers['X-Abac-Admin-Token'] = tok;
-    await api(`/api/policies/${id}/toggle`, { method: 'PUT', headers });
+    await apiAdmin(`/api/policies/${id}/toggle`, { method: 'PUT' });
     loadPolicies();
 }
 
@@ -419,4 +441,183 @@ async function loadAuditStats() {
             <td style="color:${riskColor};font-weight:600;">${escHtml(a.risk_level)}</td>
         </tr>`;
     }).join('');
+}
+
+// ============================================================
+// PERFORMANCE BENCHMARK (3.2.2)
+// ============================================================
+const PERF_SCENARIO_LABELS = {
+    none: 'Không index',
+    btree: 'B-Tree',
+    btree_partial: 'B-Tree + Partial',
+};
+
+let perfPresetsCache = [];
+
+function perfSelectedPresetIds() {
+    return [...document.querySelectorAll('input[name="perf-preset"]:checked')]
+        .map((el) => el.value);
+}
+
+function perfSelectedScenarios() {
+    return [...document.querySelectorAll('input[name="perf-scenario"]:checked')]
+        .map((el) => el.value);
+}
+
+function renderPerfPresets(presets) {
+    perfPresetsCache = presets || [];
+    const box = document.getElementById('perf-preset-list');
+    if (!box) return;
+    box.innerHTML = presets.map((p) => `
+        <label class="perf-preset-item">
+            <input type="checkbox" name="perf-preset" value="${escHtml(p.id)}">
+            <span><b>${escHtml(p.label)}</b></span>
+            <span class="perf-preset-meta">TL: ${p.rules} · EAV: ${p.eav_rows.toLocaleString('vi-VN')}</span>
+        </label>
+    `).join('');
+}
+
+async function loadPerfStatus() {
+    const st = await api('/api/performance/status');
+    const c = st.counts || {};
+    const el = document.getElementById('perf-status');
+    if (el) {
+        el.innerHTML = `
+            <div><b>Luật đang bật:</b> ${Number(c.enabled_policies || 0).toLocaleString('vi-VN')}
+            (PERF_BENCH: ${Number(c.bench_policies || 0).toLocaleString('vi-VN')})</div>
+            <div><b>EAV (user_attributes):</b> ${Number(c.total_eav || 0).toLocaleString('vi-VN')}
+            (PERF_BENCH: ${Number(c.bench_eav || 0).toLocaleString('vi-VN')})</div>
+            <div><b>Users / Resources:</b> ${Number(c.users || 0).toLocaleString('vi-VN')} /
+            ${Number(c.resources || 0).toLocaleString('vi-VN')}</div>
+            <div><b>Index PDP đang có:</b> ${(st.active_perf_indexes || []).join(', ') || '—'}</div>
+        `;
+    }
+    const defs = st.defaults || {};
+    const reqInp = document.getElementById('inp-perf-requests');
+    const batInp = document.getElementById('inp-perf-batches');
+    if (reqInp && !reqInp.dataset.touched) reqInp.value = defs.requests_per_batch ?? 1000;
+    if (batInp && !batInp.dataset.touched) batInp.value = defs.batches ?? 5;
+    const rh = document.getElementById('perf-req-hint');
+    const bh = document.getElementById('perf-batch-hint');
+    if (rh) rh.textContent = reqInp?.value || '1000';
+    if (bh) bh.textContent = batInp?.value || '5';
+    renderPerfPresets(st.presets || []);
+}
+
+document.querySelectorAll('#inp-perf-requests, #inp-perf-batches').forEach((el) => {
+    if (!el) return;
+    el.addEventListener('input', () => {
+        el.dataset.touched = '1';
+        const rh = document.getElementById('perf-req-hint');
+        const bh = document.getElementById('perf-batch-hint');
+        if (el.id === 'inp-perf-requests' && rh) rh.textContent = el.value;
+        if (el.id === 'inp-perf-batches' && bh) bh.textContent = el.value;
+    });
+});
+
+async function perfSeedSelected() {
+    const ids = perfSelectedPresetIds();
+    if (ids.length !== 1) {
+        alert('Chọn đúng một preset để seed (tránh nhầm quy mô).');
+        return;
+    }
+    const preset = perfPresetsCache.find((p) => p.id === ids[0]);
+    if (!preset) return;
+    if (!confirm(`Seed ${preset.label}? Có thể mất vài phút với quy mô lớn.`)) return;
+    const prog = document.getElementById('perf-progress');
+    prog.style.display = 'block';
+    prog.textContent = 'Đang seed dữ liệu benchmark…';
+    try {
+        const r = await apiAdmin('/api/performance/seed', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ preset_id: preset.id }),
+        });
+        prog.textContent = `Seed xong (${r.elapsed_sec}s). Luật: ${r.seeded_rules}, EAV: ${r.seeded_eav_rows}.`;
+        loadPerfStatus();
+    } catch (e) {
+        prog.textContent = e.message || String(e);
+    }
+}
+
+async function perfCleanup() {
+    if (!confirm('Xóa toàn bộ PERF_BENCH policies/EAV và khôi phục index mặc định?')) return;
+    const prog = document.getElementById('perf-progress');
+    prog.style.display = 'block';
+    prog.textContent = 'Đang dọn…';
+    try {
+        const r = await apiAdmin('/api/performance/cleanup', { method: 'POST' });
+        prog.textContent = `Đã xóa ${r.removed_policies} luật bench, ${r.removed_eav} EAV bench.`;
+        loadPerfStatus();
+    } catch (e) {
+        prog.textContent = e.message || String(e);
+    }
+}
+
+function renderPerfResults(runPayload) {
+    const tbody = document.querySelector('#tbl-perf-results tbody');
+    if (!tbody) return;
+    const rows = [];
+    (runPayload.runs || []).forEach((run) => {
+        const preset = run.preset || {};
+        const scenarios = run.scenarios || {};
+        Object.keys(scenarios).forEach((sc) => {
+            const s = scenarios[sc];
+            const measured = s.avg_ms;
+            const thesis = s.thesis_ms;
+            const ratio = s.ratio_vs_thesis != null ? `${s.ratio_vs_thesis}×` : '—';
+            rows.push(`<tr>
+                <td>${escHtml(preset.label || preset.id)}</td>
+                <td>${escHtml(PERF_SCENARIO_LABELS[sc] || sc)}</td>
+                <td><b>${measured}</b></td>
+                <td>${thesis != null ? thesis : '—'}</td>
+                <td>${ratio}</td>
+            </tr>`);
+        });
+    });
+    tbody.innerHTML = rows.join('') || '<tr><td colspan="5">Chưa có kết quả</td></tr>';
+}
+
+async function perfRunBenchmark() {
+    const presetIds = perfSelectedPresetIds();
+    const scenarios = perfSelectedScenarios();
+    if (!presetIds.length) {
+        alert('Chọn ít nhất một quy mô preset.');
+        return;
+    }
+    if (!scenarios.length) {
+        alert('Chọn ít nhất một kịch bản chỉ mục.');
+        return;
+    }
+    const requests = parseInt(document.getElementById('inp-perf-requests')?.value, 10) || 1000;
+    const batches = parseInt(document.getElementById('inp-perf-batches')?.value, 10) || 5;
+    const est = presetIds.length * scenarios.length * batches * requests;
+    if (!confirm(
+        `Chạy benchmark?\n` +
+        `- ${presetIds.length} preset × ${scenarios.length} kịch bản\n` +
+        `- ~${est.toLocaleString('vi-VN')} lần gọi PDP\n` +
+        `Index sẽ DROP/CREATE tạm thời.`
+    )) return;
+
+    const prog = document.getElementById('perf-progress');
+    prog.style.display = 'block';
+    prog.textContent = 'Đang chạy benchmark… không đóng tab.';
+    try {
+        const data = await apiAdmin('/api/performance/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                preset_ids: presetIds,
+                scenarios,
+                batches,
+                requests_per_batch: requests,
+            }),
+        });
+        const totalSec = (data.runs || []).reduce((s, r) => s + (r.elapsed_sec || 0), 0);
+        prog.textContent = `Hoàn tất (${data.runs?.length || 0} preset, ~${totalSec}s).`;
+        renderPerfResults(data);
+        loadPerfStatus();
+    } catch (e) {
+        prog.textContent = e.message || String(e);
+    }
 }
