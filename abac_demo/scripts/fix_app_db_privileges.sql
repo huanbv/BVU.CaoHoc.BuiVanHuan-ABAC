@@ -34,3 +34,10 @@ GRANT EXECUTE ON FUNCTION request_access(
 
 -- (Tuỳ chọn) Bật/tắt chính sách từ UI
 GRANT UPDATE ON policies TO :"app_user";
+
+-- Benchmark PERF_BENCH: seed / cleanup luật + EAV
+GRANT INSERT, DELETE ON policies TO :"app_user";
+GRANT INSERT, DELETE ON policy_conditions TO :"app_user";
+GRANT INSERT, DELETE ON user_attributes TO :"app_user";
+
+-- Sau khi chạy scripts/perf_index_functions.sql, app_user gọi DDL index qua SECURITY DEFINER.

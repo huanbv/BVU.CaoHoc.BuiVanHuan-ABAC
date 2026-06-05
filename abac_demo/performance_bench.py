@@ -132,36 +132,46 @@ def get_status() -> dict[str, Any]:
     }
 
 
-def _ddl(sql: str) -> None:
-    execute(sql)
+def _perf_index_helpers_available() -> bool:
+    row = query_one(
+        """
+        SELECT EXISTS (
+            SELECT 1 FROM pg_proc p
+            JOIN pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname = 'public'
+              AND p.proname = 'perf_apply_index_scenario'
+        ) AS ok
+        """
+    )
+    return bool(row and row.get("ok"))
 
 
-def _drop_perf_indexes() -> None:
+def apply_index_scenario(scenario: str) -> None:
+    if scenario not in SCENARIOS:
+        raise ValueError(f"scenario không hợp lệ: {scenario}")
+    if _perf_index_helpers_available():
+        query_one("SELECT perf_apply_index_scenario(%s) AS applied", (scenario,))
+        return
+    # Fallback: DDL trực tiếp (cần user DB là owner bảng)
     for name in (
         IDX_USER_ATTR_KEY,
         IDX_USER_ATTR_VALID,
         IDX_POLICIES_ENABLED,
         IDX_POLICIES_PARTIAL,
     ):
-        _ddl(f"DROP INDEX IF EXISTS {name}")
-
-
-def apply_index_scenario(scenario: str) -> None:
-    if scenario not in SCENARIOS:
-        raise ValueError(f"scenario không hợp lệ: {scenario}")
-    _drop_perf_indexes()
+        execute(f"DROP INDEX IF EXISTS {name}")
     if scenario == "none":
         return
-    _ddl(f"CREATE INDEX {IDX_USER_ATTR_KEY} ON user_attributes (attr_key)")
-    _ddl(
+    execute(f"CREATE INDEX {IDX_USER_ATTR_KEY} ON user_attributes (attr_key)")
+    execute(
         f"CREATE INDEX {IDX_USER_ATTR_VALID} ON user_attributes (valid_from, valid_to)"
     )
     if scenario == "btree":
-        _ddl(
+        execute(
             f"CREATE INDEX {IDX_POLICIES_ENABLED} ON policies (is_enabled, priority DESC)"
         )
     elif scenario == "btree_partial":
-        _ddl(
+        execute(
             f"CREATE INDEX {IDX_POLICIES_PARTIAL} ON policies (priority DESC) "
             "WHERE is_enabled = TRUE"
         )
@@ -172,9 +182,11 @@ def apply_index_scenario(scenario: str) -> None:
 
 def restore_production_indexes() -> None:
     """Khôi phục chỉ mục như ABAC_System_Prototype.sql sau benchmark."""
+    if _perf_index_helpers_available():
+        query_one("SELECT perf_restore_production_indexes() AS applied")
+        return
     apply_index_scenario("btree")
-    # prototype dùng composite btree, không partial — đủ cho vận hành demo
-    _ddl(f"DROP INDEX IF EXISTS {IDX_POLICIES_PARTIAL}")
+    execute(f"DROP INDEX IF EXISTS {IDX_POLICIES_PARTIAL}")
 
 
 def cleanup_benchmark_seed() -> dict[str, int]:
@@ -287,10 +299,13 @@ def seed_benchmark_scale(rules: int, eav_rows: int) -> dict[str, Any]:
                 NOW() - ((gs %% 365) || ' days')::INTERVAL,
                 CASE WHEN gs %% 17 = 0 THEN NOW() - INTERVAL '1 day' ELSE NULL END
             FROM generate_series(1, %s) AS gs
-            CROSS JOIN (
-                SELECT MIN(user_id) AS min_uid, COUNT(*)::BIGINT AS cnt FROM users
-            ) b
-            JOIN users u ON u.user_id = b.min_uid + ((gs - 1) %% GREATEST(b.cnt, 1))
+            JOIN LATERAL (
+                SELECT user_id
+                FROM users
+                ORDER BY user_id
+                OFFSET ((gs - 1) %% (SELECT GREATEST(COUNT(*)::bigint, 1) FROM users))
+                LIMIT 1
+            ) u ON TRUE
             """,
             (eav_rows,),
         )

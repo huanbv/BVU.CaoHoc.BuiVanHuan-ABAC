@@ -117,7 +117,15 @@ Gợi ý thêm tại Nginx: `limit_req` cho `location /api/`, HSTS sau khi có H
 ## Tab Hiệu năng PDP (mục 3.2.2 tiểu luận)
 
 - UI: tab **Hiệu năng PDP** — đo `evaluate_access_dynamic()` thực tế, so 3 kịch bản index, đối chiếu Bảng 10 tiểu luận.
-- Bắt buộc **`ABAC_ADMIN_TOKEN`** (DROP/CREATE index). User DB cần quyền `CREATE` trên bảng `user_attributes`, `policies` (thường owner `abac_user` hoặc chạy benchmark bằng superuser).
+- Bắt buộc **`ABAC_ADMIN_TOKEN`**. Một lần trên VPS (superuser `postgres`):
+
+```bash
+cd /var/www/abac/abac_demo
+psql -U postgres -d abac_demo -v app_user=abac_user -v ON_ERROR_STOP=1 -f scripts/fix_app_db_privileges.sql
+psql -U postgres -d abac_demo -v app_user=abac_user -v ON_ERROR_STOP=1 -f scripts/perf_index_functions.sql
+```
+
+(`app_user` = `DB_USER` trong `/etc/abac-app.env`.)
 - Biến tùy chọn: `ABAC_PERF_BATCHES` (mặc định 5), `ABAC_PERF_REQUESTS_PER_BATCH` (mặc định 1000).
 - Quy trình: **Seed preset** (một lần) → chọn preset + kịch bản → **Chạy benchmark**. Preset lớn (2.000 luật / 500k EAV) có thể mất nhiều phút; tăng timeout Gunicorn/nginx nếu HTTP bị cắt.
 

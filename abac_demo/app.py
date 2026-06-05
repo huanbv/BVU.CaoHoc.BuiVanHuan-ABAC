@@ -516,6 +516,24 @@ def _perf_admin_required():
     return verify_admin_request()
 
 
+def _perf_error_response(exc: BaseException, *, log_message: str):
+    """500 có message — giúp gỡ lỗi seed/benchmark trên VPS (đã xác thực admin)."""
+    app.logger.exception(log_message)
+    return (
+        jsonify(
+            {
+                "error": str(exc),
+                "type": type(exc).__name__,
+                "hint": (
+                    "Nếu permission denied: chạy scripts/fix_app_db_privileges.sql "
+                    "và scripts/perf_index_functions.sql trên PostgreSQL (postgres -d abac_demo)."
+                ),
+            }
+        ),
+        500,
+    )
+
+
 @app.route("/api/performance/status")
 @limiter.limit("60 per minute")
 def api_performance_status():
@@ -544,7 +562,7 @@ def api_performance_seed():
             eav = int(data.get("eav_rows", 1000))
         return jsonify(seed_benchmark_scale(rules, eav))
     except Exception as exc:
-        return api_error_response(app, exc, log_message="api_performance_seed failed")
+        return _perf_error_response(exc, log_message="api_performance_seed failed")
 
 
 @app.route("/api/performance/cleanup", methods=["POST"])
@@ -557,7 +575,7 @@ def api_performance_cleanup():
         restore_production_indexes()
         return jsonify(cleanup_benchmark_seed())
     except Exception as exc:
-        return api_error_response(app, exc, log_message="api_performance_cleanup failed")
+        return _perf_error_response(exc, log_message="api_performance_cleanup failed")
 
 
 @app.route("/api/performance/run", methods=["POST"])
@@ -596,7 +614,7 @@ def api_performance_run():
             restore_production_indexes()
         except Exception:
             app.logger.exception("restore indexes after failed benchmark")
-        return api_error_response(app, exc, log_message="api_performance_run failed")
+        return _perf_error_response(exc, log_message="api_performance_run failed")
 
 
 # ---------------------------------------------------------------------------

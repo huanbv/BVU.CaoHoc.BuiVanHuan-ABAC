@@ -71,7 +71,8 @@ const api = async (url, opts = {}) => {
     if (!res.ok) {
         const msg = (data && (data.error || data.message)) || `HTTP ${res.status}`;
         const type = data && data.type ? ` (${data.type})` : '';
-        throw new Error(`${msg}${type}`);
+        const hint = data && data.hint ? `\n${data.hint}` : '';
+        throw new Error(`${msg}${type}${hint}`);
     }
     return data;
 };
