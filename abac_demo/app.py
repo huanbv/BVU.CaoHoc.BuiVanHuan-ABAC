@@ -23,9 +23,15 @@ from database import execute, query_all, query_one
 from performance_bench import (
     THESIS_PRESETS,
     cleanup_benchmark_seed,
+    compare_benchmark_history,
+    delete_benchmark_history,
+    get_benchmark_history,
     get_status as perf_get_status,
+    history_table_ready,
+    list_benchmark_history,
     restore_production_indexes,
     run_multi_benchmark,
+    save_benchmark_history,
     seed_benchmark_scale,
 )
 from security import (
@@ -601,20 +607,81 @@ def api_performance_run():
         if requests_pb is not None:
             requests_pb = max(10, min(2000, int(requests_pb)))
 
-        return jsonify(
-            run_multi_benchmark(
-                preset_ids,
-                scenarios,
-                batches=batches,
-                requests_per_batch=requests_pb,
-            )
+        result = run_multi_benchmark(
+            preset_ids,
+            scenarios,
+            batches=batches,
+            requests_per_batch=requests_pb,
         )
+        note = (data.get("note") or "").strip() or None
+        try:
+            result["history_id"] = save_benchmark_history(result, note=note)
+        except Exception as save_exc:
+            app.logger.warning("perf history save failed: %s", save_exc)
+            result["history_save_error"] = str(save_exc)
+        return jsonify(result)
     except Exception as exc:
         try:
             restore_production_indexes()
         except Exception:
             app.logger.exception("restore indexes after failed benchmark")
         return _perf_error_response(exc, log_message="api_performance_run failed")
+
+
+@app.route("/api/performance/history")
+@limiter.limit("60 per minute")
+def api_performance_history_list():
+    try:
+        limit = request.args.get("limit", 40, type=int)
+        return jsonify(
+            {
+                "ready": history_table_ready(),
+                "items": list_benchmark_history(limit),
+            }
+        )
+    except Exception as exc:
+        return api_error_response(app, exc, log_message="api_performance_history_list failed")
+
+
+@app.route("/api/performance/history/<int:history_id>")
+@limiter.limit("60 per minute")
+def api_performance_history_get(history_id: int):
+    try:
+        item = get_benchmark_history(history_id)
+        if not item:
+            return jsonify({"error": "Không tìm thấy lịch sử."}), 404
+        return jsonify(item)
+    except Exception as exc:
+        return api_error_response(app, exc, log_message="api_performance_history_get failed")
+
+
+@app.route("/api/performance/history/compare", methods=["POST"])
+@limiter.limit("30 per minute")
+def api_performance_history_compare():
+    try:
+        data = request.get_json(force=True) or {}
+        run_ids = data.get("run_ids") or []
+        if not run_ids:
+            return jsonify({"error": "Cần run_ids (mảng history_id)."}), 400
+        return jsonify(compare_benchmark_history(run_ids))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return api_error_response(app, exc, log_message="api_performance_history_compare failed")
+
+
+@app.route("/api/performance/history/<int:history_id>", methods=["DELETE"])
+@limiter.limit("20 per hour")
+def api_performance_history_delete(history_id: int):
+    auth = _perf_admin_required()
+    if auth is not None:
+        return auth
+    try:
+        if not delete_benchmark_history(history_id):
+            return jsonify({"error": "Không xóa được (bảng lịch sử chưa sẵn sàng)."}), 503
+        return jsonify({"deleted": history_id})
+    except Exception as exc:
+        return _perf_error_response(exc, log_message="api_performance_history_delete failed")
 
 
 # ---------------------------------------------------------------------------

@@ -351,6 +351,9 @@ tr:hover td { background: var(--gray-50); }
     color: var(--gray-500);
 }
 .perf-results-table td:nth-child(3) { font-variant-numeric: tabular-nums; }
+.perf-compare-table th,
+.perf-compare-table td { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.perf-compare-ratio { font-size: 0.75rem; color: var(--gray-500); font-weight: normal; }
 .perf-ok { color: var(--success); font-weight: 600; }
 .perf-bad { color: var(--danger); font-weight: 600; font-size: 0.85rem; }
 

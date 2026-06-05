@@ -272,6 +272,10 @@
                         <input type="number" id="inp-perf-batches" min="1" max="10" value="5">
                     </div>
                 </div>
+                <div style="margin-top:0.75rem;">
+                    <label for="inp-perf-run-note">Ghi chú lần chạy (tuỳ chọn, lưu vào lịch sử)</label>
+                    <input type="text" id="inp-perf-run-note" maxlength="120" placeholder="vd. VPS sau tối ưu index, 200×3">
+                </div>
                 <div class="perf-actions">
                     <button type="button" class="btn btn-primary" onclick="perfRunBenchmark()">Chạy benchmark đã chọn</button>
                     <button type="button" class="btn btn-sm" onclick="loadPerfStatus()">Làm mới trạng thái</button>
@@ -289,7 +293,6 @@
                                 <th>Quy mô</th>
                                 <th>Kịch bản</th>
                                 <th>Đo được (ms)</th>
-                                <th>Tiểu luận (ms)</th>
                                 <th>Tỷ lệ</th>
                             </tr>
                         </thead>
@@ -297,8 +300,44 @@
                     </table>
                 </div>
                 <p class="hint-security" style="margin-top:0.75rem;">
-                    Số “Tiểu luận” là tham chiếu Bảng 10 — chỉ để đối chiếu; số “Đo được” là kết quả chạy trên DB hiện tại.
+                    “Đo được” là trung bình độ trễ PDP (ms) trên PostgreSQL hiện tại. “Tỷ lệ” so với tham chiếu Bảng 10 tiểu luận.
                 </p>
+            </div>
+
+            <div class="card" id="perf-history-card">
+                <h3>Lịch sử benchmark</h3>
+                <p id="perf-history-hint" class="hint-security">Mỗi lần chạy benchmark được lưu tự động trên PostgreSQL.</p>
+                <div class="perf-actions">
+                    <button type="button" class="btn btn-sm btn-primary" onclick="perfCompareSelected()">So sánh đã chọn (≥2)</button>
+                    <button type="button" class="btn btn-sm" onclick="loadPerfHistory()">Làm mới lịch sử</button>
+                    <button type="button" class="btn btn-sm" onclick="perfDeleteHistorySelected()">Xóa đã chọn</button>
+                </div>
+                <div style="overflow-x:auto; margin-top:0.75rem;">
+                    <table id="tbl-perf-history" class="perf-results-table">
+                        <thead>
+                            <tr>
+                                <th><input type="checkbox" id="perf-history-check-all" title="Chọn tất cả"></th>
+                                <th>Thời gian</th>
+                                <th>Ghi chú</th>
+                                <th>Tham số</th>
+                                <th>Kết quả</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="card" id="perf-compare-card" style="display:none;">
+                <h3>Bảng so sánh</h3>
+                <p id="perf-compare-summary" class="hint-security"></p>
+                <div style="overflow-x:auto;">
+                    <table id="tbl-perf-compare" class="perf-results-table perf-compare-table">
+                        <thead></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
             </div>
         </div>
     </div>

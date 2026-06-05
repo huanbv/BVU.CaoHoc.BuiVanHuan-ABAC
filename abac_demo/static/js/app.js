@@ -47,7 +47,10 @@ document.querySelectorAll('.tab').forEach(tab => {
         if (tab.dataset.tab === 'data') loadData();
         if (tab.dataset.tab === 'policies') loadPolicies();
         if (tab.dataset.tab === 'audit') { loadAuditLogs(); loadAuditStats(); }
-        if (tab.dataset.tab === 'performance') loadPerfStatus();
+        if (tab.dataset.tab === 'performance') {
+            loadPerfStatus();
+            loadPerfHistory();
+        }
     });
 });
 
@@ -540,6 +543,12 @@ async function loadPerfStatus() {
     if (bh) bh.textContent = batInp?.value || '5';
     renderPerfPresets(st.presets || []);
     restorePerfResultsFromStorage();
+    const histHint = document.getElementById('perf-history-hint');
+    if (histHint) {
+        histHint.textContent = st.history_table_ready
+            ? 'Mỗi lần chạy benchmark được lưu tự động — chọn ≥2 dòng để so sánh.'
+            : 'Chưa có bảng lịch sử — chạy scripts/perf_benchmark_history.sql trên PostgreSQL.';
+    }
 }
 
 document.querySelectorAll('#inp-perf-requests, #inp-perf-batches').forEach((el) => {
@@ -715,19 +724,17 @@ function renderPerfResults(runPayload) {
         Object.keys(scenarios).forEach((sc) => {
             const s = scenarios[sc];
             const measured = s.avg_ms;
-            const thesis = s.thesis_ms;
             const ratio = s.ratio_vs_thesis != null ? `${s.ratio_vs_thesis}×` : '—';
             rowCount += 1;
             rows.push(`<tr>
                 <td>${escHtml(preset.label || preset.id)}</td>
                 <td>${escHtml(PERF_SCENARIO_LABELS[sc] || sc)}</td>
                 <td><b>${measured}</b></td>
-                <td>${thesis != null ? thesis : '—'}</td>
                 <td>${ratio}</td>
             </tr>`);
         });
     });
-    tbody.innerHTML = rows.join('') || '<tr><td colspan="5">Chưa có kết quả — có thể request bị timeout trước khi server trả JSON.</td></tr>';
+    tbody.innerHTML = rows.join('') || '<tr><td colspan="4">Chưa có kết quả — có thể request bị timeout trước khi server trả JSON.</td></tr>';
     if (summary) {
         const savedAt = runPayload.saved_at
             ? new Date(runPayload.saved_at).toLocaleString('vi-VN')
@@ -788,6 +795,148 @@ function perfSuggestParams(presetIds) {
     return { requests: 1000, batches: 5, note: null };
 }
 
+function perfSelectedHistoryIds() {
+    return [...document.querySelectorAll('input[name="perf-history"]:checked')]
+        .map((el) => parseInt(el.value, 10))
+        .filter((n) => !Number.isNaN(n));
+}
+
+function perfFormatHistoryTime(iso) {
+    if (!iso) return '—';
+    try {
+        return new Date(iso).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' });
+    } catch {
+        return iso;
+    }
+}
+
+async function loadPerfHistory() {
+    const tbody = document.querySelector('#tbl-perf-history tbody');
+    if (!tbody) return;
+    try {
+        const data = await api('/api/performance/history');
+        const items = data.items || [];
+        if (!data.ready) {
+            tbody.innerHTML = '<tr><td colspan="6">Chưa cài bảng lịch sử (perf_benchmark_history.sql).</td></tr>';
+            return;
+        }
+        if (!items.length) {
+            tbody.innerHTML = '<tr><td colspan="6">Chưa có lần chạy nào được lưu.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = items.map((h) => {
+            const params = `${h.requests_per_batch}×${h.batches} · ${(h.scenarios || []).join(', ')}`;
+            const presets = (h.preset_labels || []).join(', ') || '—';
+            const note = h.note ? escHtml(h.note) : '—';
+            return `<tr>
+                <td><input type="checkbox" name="perf-history" value="${h.history_id}"></td>
+                <td>${escHtml(perfFormatHistoryTime(h.created_at))}</td>
+                <td>${note}</td>
+                <td>${escHtml(params)}</td>
+                <td>${h.result_rows} dòng · ${escHtml(presets)}</td>
+                <td><button type="button" class="btn btn-sm" onclick="perfViewHistory(${h.history_id})">Xem</button></td>
+            </tr>`;
+        }).join('');
+        const checkAll = document.getElementById('perf-history-check-all');
+        if (checkAll) {
+            checkAll.checked = false;
+            checkAll.onchange = () => {
+                document.querySelectorAll('input[name="perf-history"]').forEach((cb) => {
+                    cb.checked = checkAll.checked;
+                });
+            };
+        }
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="6">${escHtml(e.message || String(e))}</td></tr>`;
+    }
+}
+
+async function perfViewHistory(historyId) {
+    try {
+        const item = await api(`/api/performance/history/${historyId}`);
+        const payload = item.payload || {};
+        payload.saved_at = item.created_at;
+        payload.history_note = item.note;
+        savePerfResults(payload);
+        renderPerfResults(payload);
+        document.getElementById('perf-results-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (e) {
+        alert(e.message || String(e));
+    }
+}
+
+function renderPerfCompare(data) {
+    const card = document.getElementById('perf-compare-card');
+    const thead = document.querySelector('#tbl-perf-compare thead');
+    const tbody = document.querySelector('#tbl-perf-compare tbody');
+    const summary = document.getElementById('perf-compare-summary');
+    if (!card || !thead || !tbody) return;
+
+    const runs = data.runs || [];
+    const rows = data.rows || [];
+    thead.innerHTML = `<tr>
+        <th>Quy mô</th>
+        <th>Kịch bản</th>
+        ${runs.map((r) => `<th>${escHtml(r.label || `#${r.history_id}`)}</th>`).join('')}
+    </tr>`;
+
+    tbody.innerHTML = rows.map((row) => {
+        const cells = runs.map((r) => {
+            const v = row.values?.[r.history_id];
+            if (!v || v.avg_ms == null) return '<td>—</td>';
+            const ratio = v.ratio_vs_thesis != null ? ` <span class="perf-compare-ratio">(${v.ratio_vs_thesis}×)</span>` : '';
+            return `<td><b>${v.avg_ms}</b>${ratio}</td>`;
+        }).join('');
+        return `<tr>
+            <td>${escHtml(row.preset_label)}</td>
+            <td>${escHtml(PERF_SCENARIO_LABELS[row.scenario] || row.scenario)}</td>
+            ${cells}
+        </tr>`;
+    }).join('') || `<tr><td colspan="${runs.length + 2}">Không có dòng chung để so sánh.</td></tr>`;
+
+    if (summary) {
+        summary.textContent = `So sánh ${runs.length} lần chạy · ${rows.length} dòng (quy mô + kịch bản).`;
+    }
+    card.style.display = 'block';
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function perfCompareSelected() {
+    const ids = perfSelectedHistoryIds();
+    if (ids.length < 2) {
+        alert('Chọn ít nhất 2 dòng lịch sử để so sánh.');
+        return;
+    }
+    try {
+        const data = await api('/api/performance/history/compare', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ run_ids: ids }),
+        });
+        renderPerfCompare(data);
+    } catch (e) {
+        alert(e.message || String(e));
+    }
+}
+
+async function perfDeleteHistorySelected() {
+    const ids = perfSelectedHistoryIds();
+    if (!ids.length) {
+        alert('Chọn ít nhất một dòng để xóa.');
+        return;
+    }
+    if (!confirm(`Xóa ${ids.length} bản ghi lịch sử?`)) return;
+    for (const id of ids) {
+        try {
+            await apiAdmin(`/api/performance/history/${id}`, { method: 'DELETE' });
+        } catch (e) {
+            alert(`Không xóa #${id}: ${e.message || e}`);
+            break;
+        }
+    }
+    loadPerfHistory();
+}
+
 async function perfRunBenchmark() {
     const presetIds = perfSelectedPresetIds();
     const scenarios = perfSelectedScenarios();
@@ -823,6 +972,7 @@ async function perfRunBenchmark() {
         hint: `~${estCalls.toLocaleString('vi-VN')} lần gọi PDP · không đóng tab.`,
     });
     try {
+        const note = (document.getElementById('inp-perf-run-note')?.value || '').trim();
         const data = await apiAdmin('/api/performance/run', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -831,18 +981,23 @@ async function perfRunBenchmark() {
                 scenarios,
                 batches,
                 requests_per_batch: requests,
+                note: note || undefined,
             }),
         });
         const totalSec = (data.runs || []).reduce((s, r) => s + (r.elapsed_sec || 0), 0);
         savePerfResults(data);
         const rowCount = renderPerfResults(data);
+        const histMsg = data.history_id
+            ? ` · đã lưu lịch sử #${data.history_id}`
+            : (data.history_save_error ? ' · chưa lưu lịch sử (xem log)' : '');
         stopPerfProgress(
             true,
             rowCount
-                ? `Hoàn tất: ${rowCount} dòng kết quả (${data.runs?.length || 0} preset, ~${totalSec}s).`
+                ? `Hoàn tất: ${rowCount} dòng (${data.runs?.length || 0} preset, ~${totalSec}s)${histMsg}.`
                 : `Server trả về nhưng không có dòng kết quả (~${totalSec}s).`,
         );
         loadPerfStatus();
+        loadPerfHistory();
     } catch (e) {
         stopPerfProgress(false, e.message || String(e));
     }

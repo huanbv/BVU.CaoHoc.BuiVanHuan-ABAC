@@ -15,3 +15,7 @@ GRANT EXECUTE ON FUNCTION evaluate_access_dynamic(
 GRANT EXECUTE ON FUNCTION request_access(
     integer, integer, text, text, text, integer, inet, text
 ) TO abac_user;
+
+-- Lịch sử benchmark (sau khi chạy perf_benchmark_history.sql)
+GRANT SELECT, INSERT, DELETE ON perf_benchmark_history TO abac_user;
+GRANT USAGE, SELECT ON SEQUENCE perf_benchmark_history_history_id_seq TO abac_user;

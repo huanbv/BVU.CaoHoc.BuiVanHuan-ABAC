@@ -13,6 +13,8 @@ import random
 import time
 from typing import Any
 
+from psycopg2.extras import Json
+
 from database import DB_CONFIG, execute, get_connection, query_all, query_one
 
 # Chỉ mục PDP/EAV theo tiểu luận (tên cố định để DROP/CREATE)
@@ -152,6 +154,7 @@ def get_status() -> dict[str, Any]:
             "batches": _default_batches(),
             "requests_per_batch": _default_requests(),
         },
+        "history_table_ready": history_table_ready(),
         "presets": THESIS_PRESETS,
         "scenarios": [
             {
@@ -544,3 +547,186 @@ def run_multi_benchmark(
         "batches": batches or _default_batches(),
         "requests_per_batch": requests_per_batch or _default_requests(),
     }
+
+
+# ---------------------------------------------------------------------------
+# Lịch sử benchmark (PostgreSQL — scripts/perf_benchmark_history.sql)
+# ---------------------------------------------------------------------------
+
+def history_table_ready() -> bool:
+    row = query_one(
+        """
+        SELECT EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'perf_benchmark_history'
+        ) AS ok
+        """
+    )
+    return bool(row and row.get("ok"))
+
+
+def _flatten_payload_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for run in payload.get("runs") or []:
+        preset = run.get("preset") or {}
+        for sc, s in (run.get("scenarios") or {}).items():
+            rows.append(
+                {
+                    "preset_id": preset.get("id"),
+                    "preset_label": preset.get("label") or preset.get("id"),
+                    "scenario": sc,
+                    "avg_ms": s.get("avg_ms"),
+                    "ratio_vs_thesis": s.get("ratio_vs_thesis"),
+                }
+            )
+    return rows
+
+
+def save_benchmark_history(
+    payload: dict[str, Any], note: str | None = None
+) -> int:
+    if not history_table_ready():
+        raise RuntimeError(
+            "Chưa có bảng perf_benchmark_history — chạy scripts/perf_benchmark_history.sql"
+        )
+    total = sum(float(r.get("elapsed_sec") or 0) for r in payload.get("runs") or [])
+    row = query_one(
+        """
+        INSERT INTO perf_benchmark_history (
+            batches, requests_per_batch, scenarios, total_elapsed_sec, note, payload
+        ) VALUES (%s, %s, %s, %s, %s, %s)
+        RETURNING history_id
+        """,
+        (
+            int(payload.get("batches") or _default_batches()),
+            int(payload.get("requests_per_batch") or _default_requests()),
+            list(payload.get("scenarios") or []),
+            round(total, 2),
+            (note or "").strip() or None,
+            Json(payload),
+        ),
+    )
+    return int(row["history_id"])
+
+
+def list_benchmark_history(limit: int = 40) -> list[dict[str, Any]]:
+    if not history_table_ready():
+        return []
+    limit = max(1, min(100, int(limit)))
+    rows = query_all(
+        """
+        SELECT history_id, created_at, batches, requests_per_batch,
+               scenarios, total_elapsed_sec, note, payload
+        FROM perf_benchmark_history
+        ORDER BY created_at DESC
+        LIMIT %s
+        """,
+        (limit,),
+    )
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        payload = r.get("payload") or {}
+        flat = _flatten_payload_rows(payload)
+        created = r.get("created_at")
+        out.append(
+            {
+                "history_id": r["history_id"],
+                "created_at": created.isoformat() if hasattr(created, "isoformat") else created,
+                "batches": r["batches"],
+                "requests_per_batch": r["requests_per_batch"],
+                "scenarios": list(r.get("scenarios") or []),
+                "total_elapsed_sec": (
+                    float(r["total_elapsed_sec"]) if r.get("total_elapsed_sec") is not None else None
+                ),
+                "note": r.get("note"),
+                "result_rows": len(flat),
+                "preset_labels": sorted({x["preset_label"] for x in flat if x.get("preset_label")}),
+            }
+        )
+    return out
+
+
+def get_benchmark_history(history_id: int) -> dict[str, Any] | None:
+    if not history_table_ready():
+        return None
+    row = query_one(
+        """
+        SELECT history_id, created_at, batches, requests_per_batch,
+               scenarios, total_elapsed_sec, note, payload
+        FROM perf_benchmark_history
+        WHERE history_id = %s
+        """,
+        (int(history_id),),
+    )
+    if not row:
+        return None
+    payload = row.get("payload") or {}
+    created = row.get("created_at")
+    return {
+        "history_id": row["history_id"],
+        "created_at": created.isoformat() if hasattr(created, "isoformat") else created,
+        "batches": row["batches"],
+        "requests_per_batch": row["requests_per_batch"],
+        "scenarios": list(row.get("scenarios") or []),
+        "total_elapsed_sec": (
+            float(row["total_elapsed_sec"]) if row.get("total_elapsed_sec") is not None else None
+        ),
+        "note": row.get("note"),
+        "payload": payload,
+        "rows": _flatten_payload_rows(payload),
+    }
+
+
+def delete_benchmark_history(history_id: int) -> bool:
+    if not history_table_ready():
+        return False
+    execute("DELETE FROM perf_benchmark_history WHERE history_id = %s", (int(history_id),))
+    return True
+
+
+def compare_benchmark_history(run_ids: list[int]) -> dict[str, Any]:
+    if len(run_ids) < 2:
+        raise ValueError("Cần chọn ít nhất 2 lần chạy để so sánh.")
+    run_ids = list(dict.fromkeys(int(x) for x in run_ids))[:10]
+    runs_meta: list[dict[str, Any]] = []
+    matrix: dict[tuple[str, str], dict[int, Any]] = {}
+
+    for hid in run_ids:
+        item = get_benchmark_history(hid)
+        if not item:
+            continue
+        created = item.get("created_at", "")
+        short_label = created[:16].replace("T", " ") if created else f"#{hid}"
+        if item.get("note"):
+            short_label = f"{item['note']} ({short_label})"
+        runs_meta.append(
+            {
+                "history_id": hid,
+                "label": short_label,
+                "created_at": created,
+                "note": item.get("note"),
+                "batches": item.get("batches"),
+                "requests_per_batch": item.get("requests_per_batch"),
+            }
+        )
+        for row in item.get("rows") or []:
+            key = (row.get("preset_label") or "", row.get("scenario") or "")
+            matrix.setdefault(key, {})[hid] = {
+                "avg_ms": row.get("avg_ms"),
+                "ratio_vs_thesis": row.get("ratio_vs_thesis"),
+            }
+
+    if len(runs_meta) < 2:
+        raise ValueError("Không đủ bản ghi hợp lệ để so sánh.")
+
+    compare_rows = []
+    for (preset_label, scenario), values in sorted(matrix.items(), key=lambda x: (x[0][0], x[0][1])):
+        compare_rows.append(
+            {
+                "preset_label": preset_label,
+                "scenario": scenario,
+                "values": values,
+            }
+        )
+
+    return {"runs": runs_meta, "rows": compare_rows}
