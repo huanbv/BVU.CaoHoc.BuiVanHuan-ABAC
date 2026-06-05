@@ -269,6 +269,8 @@ tr:hover td { background: var(--gray-50); }
 }
 .perf-preset-meta { font-size: 0.75rem; color: var(--gray-500); }
 .perf-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
+.perf-fast-toggle { display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.9rem; cursor: pointer; }
+.perf-fast-toggle input { margin-top: 0.2rem; }
 .perf-progress {
     margin-top: 0.75rem;
     padding: 1rem;

@@ -75,6 +75,43 @@ def _default_requests() -> int:
     return max(10, min(2000, int(os.getenv("ABAC_PERF_REQUESTS_PER_BATCH", "1000"))))
 
 
+def resolve_run_params(
+    preset: dict[str, Any],
+    batches: int | None,
+    requests_per_batch: int | None,
+    *,
+    fast_mode: bool = False,
+) -> tuple[int, int, str | None]:
+    """Chế độ nhanh: giảm mẫu theo quy mô luật (phù hợp preset 500–2000)."""
+    batches = batches or _default_batches()
+    requests_per_batch = requests_per_batch or _default_requests()
+    if not fast_mode:
+        return batches, requests_per_batch, None
+
+    rules = int(preset.get("rules") or 0)
+    if rules >= 2000:
+        cap_r, cap_b = 50, 3
+    elif rules >= 1000:
+        cap_r, cap_b = 100, 3
+    elif rules >= 500:
+        cap_r, cap_b = 200, 3
+    elif rules >= 200:
+        cap_r, cap_b = 300, 4
+    else:
+        return batches, requests_per_batch, None
+
+    new_r = min(requests_per_batch, cap_r)
+    new_b = min(batches, cap_b)
+    if new_r == requests_per_batch and new_b == batches:
+        return batches, requests_per_batch, None
+    return (
+        new_b,
+        new_r,
+        f"Chế độ nhanh ({preset.get('label', preset.get('id'))}): "
+        f"{new_r} yêu cầu × {new_b} đợt thay vì {requests_per_batch}×{batches}",
+    )
+
+
 def get_db_readiness() -> dict[str, Any]:
     """Kiểm tra quyền DB của user app — hiển thị trên UI trước khi seed/run."""
     row = query_one(
@@ -155,6 +192,7 @@ def get_status() -> dict[str, Any]:
             "requests_per_batch": _default_requests(),
         },
         "history_table_ready": history_table_ready(),
+        "perf_eval_batch_available": _perf_eval_batch_available(),
         "presets": THESIS_PRESETS,
         "scenarios": [
             {
@@ -409,8 +447,36 @@ def _random_pairs(requests: int) -> list[tuple[int, int]]:
     return [(int(r["user_id"]), int(r["resource_id"])) for r in rows]
 
 
-def _run_eval_batch(pairs: list[tuple[int, int]]) -> list[float]:
-    """Trả về danh sách độ trễ PDP (ms) — ưu tiên evaluation_time_ms từ DB, fallback đo wall-clock."""
+def _perf_eval_batch_available() -> bool:
+    row = query_one(
+        """
+        SELECT EXISTS (
+            SELECT 1 FROM pg_proc p
+            JOIN pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname = 'public' AND p.proname = 'perf_avg_eval_batch'
+        ) AS ok
+        """
+    )
+    return bool(row and row.get("ok"))
+
+
+def _run_eval_batch_stats(pairs: list[tuple[int, int]]) -> tuple[float, int]:
+    """Trả về (avg_ms, sample_count) cho một đợt."""
+    if not pairs:
+        return 0.0, 0
+
+    uids = [p[0] for p in pairs]
+    rids = [p[1] for p in pairs]
+    hours = [random.randint(0, 23) for _ in pairs]
+
+    if _perf_eval_batch_available():
+        row = query_one(
+            "SELECT avg_ms, sample_count FROM perf_avg_eval_batch(%s, %s, %s)",
+            (uids, rids, hours),
+        )
+        if row and int(row.get("sample_count") or 0) > 0:
+            return float(row["avg_ms"]), int(row["sample_count"])
+
     times: list[float] = []
     sql = """
         SELECT evaluation_time_ms
@@ -421,8 +487,7 @@ def _run_eval_batch(pairs: list[tuple[int, int]]) -> list[float]:
     """
     with get_connection() as conn:
         with conn.cursor() as cur:
-            for uid, rid in pairs:
-                hour = random.randint(0, 23)
+            for uid, rid, hour in zip(uids, rids, hours):
                 t0 = time.perf_counter()
                 cur.execute(sql, (uid, rid, hour))
                 row = cur.fetchone()
@@ -431,7 +496,7 @@ def _run_eval_batch(pairs: list[tuple[int, int]]) -> list[float]:
                     times.append(float(row[0]))
                 elif wall_ms > 0:
                     times.append(round(wall_ms, 2))
-    return times
+    return round(_mean(times), 2), len(times)
 
 
 def _mean(values: list[float]) -> float:
@@ -444,13 +509,15 @@ def run_preset_benchmark(
     *,
     batches: int | None = None,
     requests_per_batch: int | None = None,
+    fast_mode: bool = False,
 ) -> dict[str, Any]:
     preset = next((p for p in THESIS_PRESETS if p["id"] == preset_id), None)
     if not preset:
         raise ValueError(f"preset không tồn tại: {preset_id}")
 
-    batches = batches or _default_batches()
-    requests_per_batch = requests_per_batch or _default_requests()
+    batches, requests_per_batch, param_note = resolve_run_params(
+        preset, batches, requests_per_batch, fast_mode=fast_mode
+    )
 
     for sc in scenarios:
         if sc not in SCENARIOS:
@@ -482,15 +549,14 @@ def run_preset_benchmark(
             for b in range(1, batches + 1):
                 pairs = _random_pairs(requests_per_batch)
                 t_batch = time.perf_counter()
-                samples = _run_eval_batch(pairs)
+                avg_ms, sample_count = _run_eval_batch_stats(pairs)
                 wall_ms = (time.perf_counter() - t_batch) * 1000.0
-                avg_ms = round(_mean(samples), 2)
                 batch_avgs.append(avg_ms)
                 batch_details.append(
                     {
                         "batch": b,
                         "requests": len(pairs),
-                        "samples": len(samples),
+                        "samples": sample_count,
                         "avg_eval_ms": avg_ms,
                         "wall_ms": round(wall_ms, 1),
                     }
@@ -516,6 +582,9 @@ def run_preset_benchmark(
             "function": "evaluate_access_dynamic",
             "batches": batches,
             "requests_per_batch": requests_per_batch,
+            "fast_mode": fast_mode,
+            "param_note": param_note,
+            "eval_batch_fn": _perf_eval_batch_available(),
             "note": "Trung bình của trung bình từng đợt (pgbench-style).",
         },
         "scenarios": scenario_results,
@@ -530,22 +599,31 @@ def run_multi_benchmark(
     *,
     batches: int | None = None,
     requests_per_batch: int | None = None,
+    fast_mode: bool = False,
 ) -> dict[str, Any]:
     results = []
+    adjustments: list[str] = []
     for pid in preset_ids:
-        results.append(
-            run_preset_benchmark(
-                pid,
-                scenarios,
-                batches=batches,
-                requests_per_batch=requests_per_batch,
-            )
+        run = run_preset_benchmark(
+            pid,
+            scenarios,
+            batches=batches,
+            requests_per_batch=requests_per_batch,
+            fast_mode=fast_mode,
         )
+        note = (run.get("method") or {}).get("param_note")
+        if note:
+            adjustments.append(note)
+        results.append(run)
+
     return {
         "runs": results,
         "scenarios": scenarios,
         "batches": batches or _default_batches(),
         "requests_per_batch": requests_per_batch or _default_requests(),
+        "fast_mode": fast_mode,
+        "param_adjustments": adjustments,
+        "perf_eval_batch_available": _perf_eval_batch_available(),
     }
 
 

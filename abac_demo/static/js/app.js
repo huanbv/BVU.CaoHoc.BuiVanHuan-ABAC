@@ -494,7 +494,7 @@ function renderPerfPresets(presets) {
     if (!box) return;
     box.innerHTML = presets.map((p) => `
         <label class="perf-preset-item">
-            <input type="checkbox" name="perf-preset" value="${escHtml(p.id)}">
+            <input type="checkbox" name="perf-preset" value="${escHtml(p.id)}" onchange="perfApplyFastModeToInputs()">
             <span><b>${escHtml(p.label)}</b></span>
             <span class="perf-preset-meta">TL: ${p.rules} · EAV: ${p.eav_rows.toLocaleString('vi-VN')}</span>
         </label>
@@ -529,6 +529,7 @@ async function loadPerfStatus() {
             <div><b>Users / Resources:</b> ${Number(c.users || 0).toLocaleString('vi-VN')} /
             ${Number(c.resources || 0).toLocaleString('vi-VN')}</div>
             <div><b>Index PDP:</b> ${(st.active_perf_indexes || []).join(', ') || '—'}</div>
+            <div><b>Batch PDP (DB):</b> ${st.perf_eval_batch_available ? 'yes' : 'no — chạy perf_eval_batch.sql'}</div>
             ${!rd.ready_for_seed ? '<div class="perf-bad">Chạy trên VPS: sudo -u postgres psql -d abac_demo -f scripts/perf_grants_abac_user.sql và perf_index_functions.sql</div>' : ''}
         `;
     }
@@ -550,6 +551,8 @@ async function loadPerfStatus() {
             : 'Chưa có bảng lịch sử — chạy scripts/perf_benchmark_history.sql trên PostgreSQL.';
     }
 }
+
+document.getElementById('inp-perf-fast-mode')?.addEventListener('change', perfApplyFastModeToInputs);
 
 document.querySelectorAll('#inp-perf-requests, #inp-perf-batches').forEach((el) => {
     if (!el) return;
@@ -766,14 +769,61 @@ function restorePerfResultsFromStorage() {
     }
 }
 
+function perfIsFastMode() {
+    const el = document.getElementById('inp-perf-fast-mode');
+    return el ? el.checked : true;
+}
+
+function perfFastCaps(rules) {
+    if (rules >= 2000) return { requests: 50, batches: 3 };
+    if (rules >= 1000) return { requests: 100, batches: 3 };
+    if (rules >= 500) return { requests: 200, batches: 3 };
+    if (rules >= 200) return { requests: 300, batches: 4 };
+    return null;
+}
+
+function perfEffectiveRunParams(presetIds, batches, requests) {
+    if (!perfIsFastMode()) return { batches, requests };
+    let effB = batches;
+    let effR = requests;
+    presetIds.forEach((pid) => {
+        const p = perfPresetsCache.find((x) => x.id === pid);
+        const caps = perfFastCaps(p?.rules || 0);
+        if (caps) {
+            effB = Math.min(effB, caps.batches);
+            effR = Math.min(effR, caps.requests);
+        }
+    });
+    return { batches: effB, requests: effR };
+}
+
+function perfApplyFastModeToInputs() {
+    if (!perfIsFastMode()) return;
+    const ids = perfSelectedPresetIds();
+    const suggest = perfSuggestParams(ids);
+    if (!suggest.note) return;
+    const reqInp = document.getElementById('inp-perf-requests');
+    const batInp = document.getElementById('inp-perf-batches');
+    if (reqInp) reqInp.value = String(suggest.requests);
+    if (batInp) batInp.value = String(suggest.batches);
+    const rh = document.getElementById('perf-req-hint');
+    const bh = document.getElementById('perf-batch-hint');
+    if (rh) rh.textContent = reqInp?.value || '';
+    if (bh) bh.textContent = batInp?.value || '';
+}
+
 function perfEstimateRunSeconds(presetIds, scenarios, batches, requests) {
+    const eff = perfEffectiveRunParams(presetIds, batches, requests);
     let totalSec = 0;
     presetIds.forEach((pid) => {
         const preset = perfPresetsCache.find((p) => p.id === pid);
         if (!preset?.thesis_ms) return;
+        const caps = perfIsFastMode() ? perfFastCaps(preset.rules || 0) : null;
+        const b = caps ? Math.min(eff.batches, caps.batches) : eff.batches;
+        const r = caps ? Math.min(eff.requests, caps.requests) : eff.requests;
         scenarios.forEach((sc) => {
             const ms = preset.thesis_ms[sc] || preset.thesis_ms.btree_partial || 50;
-            totalSec += (batches * requests * ms) / 1000;
+            totalSec += (b * r * ms) / 1000;
         });
     });
     totalSec += presetIds.length * scenarios.length * 30;
@@ -950,16 +1000,21 @@ async function perfRunBenchmark() {
     }
     const requests = parseInt(document.getElementById('inp-perf-requests')?.value, 10) || 1000;
     const batches = parseInt(document.getElementById('inp-perf-batches')?.value, 10) || 5;
-    const estCalls = presetIds.length * scenarios.length * batches * requests;
+    const fastMode = perfIsFastMode();
+    const eff = perfEffectiveRunParams(presetIds, batches, requests);
+    const estCalls = presetIds.length * scenarios.length * eff.batches * eff.requests;
     const estMin = perfEstimateRunMinutes(presetIds, scenarios, batches, requests);
-    const suggest = perfSuggestParams(presetIds);
+    const fastNote = fastMode && (eff.batches < batches || eff.requests < requests)
+        ? `\nChế độ nhanh: thực tế ~${eff.requests}×${eff.batches} mỗi preset lớn.`
+        : (fastMode ? '\nChế độ nhanh: bật.' : '\nChế độ đầy đủ (1000×5 nếu không đổi tham số).');
     const slowWarn = estMin >= 30
-        ? `\n⚠ Ước tính ~${estMin} phút — preset lớn rất chậm (mỗi lần PDP có thể 0,1–1+ giây).\nGợi ý: ${suggest.note || 'giảm yêu cầu/đợt'}, chạy 1 preset + 1 kịch bản mỗi lần.`
+        ? `\n⚠ Ước tính ~${estMin} phút. Chạy 1 kịch bản/lần nếu vẫn lâu.`
         : `\nƯớc tính ~${estMin} phút.`;
     if (!confirm(
         `Chạy benchmark?\n` +
         `- ${presetIds.length} preset × ${scenarios.length} kịch bản\n` +
         `- ~${estCalls.toLocaleString('vi-VN')} lần gọi PDP` +
+        fastNote +
         slowWarn +
         `\nIndex sẽ DROP/CREATE tạm thời. Không đóng tab.`
     )) return;
@@ -981,6 +1036,7 @@ async function perfRunBenchmark() {
                 scenarios,
                 batches,
                 requests_per_batch: requests,
+                fast_mode: fastMode,
                 note: note || undefined,
             }),
         });

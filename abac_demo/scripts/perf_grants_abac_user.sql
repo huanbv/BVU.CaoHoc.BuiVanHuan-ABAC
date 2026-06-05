@@ -19,3 +19,6 @@ GRANT EXECUTE ON FUNCTION request_access(
 -- Lịch sử benchmark (sau khi chạy perf_benchmark_history.sql)
 GRANT SELECT, INSERT, DELETE ON perf_benchmark_history TO abac_user;
 GRANT USAGE, SELECT ON SEQUENCE perf_benchmark_history_history_id_seq TO abac_user;
+
+-- Batch PDP trong DB (sau perf_eval_batch.sql)
+GRANT EXECUTE ON FUNCTION perf_avg_eval_batch(INT[], INT[], INT[]) TO abac_user;
