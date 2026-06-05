@@ -455,6 +455,25 @@ const PERF_SCENARIO_LABELS = {
 
 let perfPresetsCache = [];
 const PERF_RESULTS_SS_KEY = 'abac_perf_last_results';
+let perfProgressTimer = null;
+
+const PERF_RUN_STEPS = [
+    'Kiểm tra quy mô luật và EAV…',
+    'Áp dụng kịch bản chỉ mục (DROP/CREATE)…',
+    'Lấy cặp user/resource ngẫu nhiên…',
+    'Gọi evaluate_access_dynamic()…',
+    'Tính trung bình độ trễ từng đợt…',
+    'Khôi phục chỉ mục production…',
+    'Đóng gói kết quả…',
+];
+
+const PERF_SEED_STEPS = [
+    'Xóa dữ liệu PERF_BENCH cũ…',
+    'INSERT policies benchmark…',
+    'INSERT policy_conditions…',
+    'INSERT user_attributes (EAV)…',
+    'ANALYZE bảng policies / EAV…',
+];
 
 function perfSelectedPresetIds() {
     return [...document.querySelectorAll('input[name="perf-preset"]:checked')]
@@ -534,6 +553,106 @@ document.querySelectorAll('#inp-perf-requests, #inp-perf-batches').forEach((el) 
     });
 });
 
+function perfFormatDuration(sec) {
+    sec = Math.max(0, Math.ceil(sec));
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    if (m > 0) return `${m}:${String(s).padStart(2, '0')}`;
+    return `${s} giây`;
+}
+
+function perfEstimateSeedSeconds(preset) {
+    if (!preset) return 30;
+    return Math.max(20, Math.round(preset.rules / 15 + preset.eav_rows / 6000 + 15));
+}
+
+function startPerfProgress(opts) {
+    stopPerfProgress();
+    const box = document.getElementById('perf-progress');
+    if (!box) return;
+
+    const {
+        title = 'Đang xử lý…',
+        estimatedSec = 120,
+        steps = ['Đang xử lý…'],
+        hint = 'Không đóng tab trình duyệt.',
+    } = opts;
+
+    box.style.display = 'block';
+    box.className = 'perf-progress perf-progress-active';
+    box.innerHTML = `
+        <div class="perf-progress-header">
+            <span class="perf-progress-spinner" aria-hidden="true"></span>
+            <strong class="perf-progress-title">${escHtml(title)}</strong>
+        </div>
+        <div class="perf-progress-track">
+            <div class="perf-progress-fill" id="perf-progress-fill"></div>
+        </div>
+        <div class="perf-progress-meta">
+            <span id="perf-progress-pct">0%</span>
+            <span id="perf-progress-eta">Còn khoảng ${perfFormatDuration(estimatedSec)}</span>
+        </div>
+        <p class="perf-progress-step" id="perf-progress-step">${escHtml(steps[0])}</p>
+        <p class="perf-progress-hint">${escHtml(hint)}</p>
+    `;
+
+    const start = Date.now();
+    perfProgressTimer = setInterval(() => {
+        const elapsed = (Date.now() - start) / 1000;
+        const fill = document.getElementById('perf-progress-fill');
+        const pctEl = document.getElementById('perf-progress-pct');
+        const etaEl = document.getElementById('perf-progress-eta');
+        const stepEl = document.getElementById('perf-progress-step');
+
+        let pct;
+        if (elapsed >= estimatedSec) {
+            pct = Math.min(98, 95 + ((elapsed - estimatedSec) / Math.max(estimatedSec, 30)) * 3);
+            if (etaEl) etaEl.textContent = 'Sắp xong — server vẫn đang xử lý…';
+        } else {
+            pct = (elapsed / estimatedSec) * 95;
+            if (etaEl) etaEl.textContent = `Còn khoảng ${perfFormatDuration(estimatedSec - elapsed)}`;
+        }
+        if (fill) fill.style.width = `${pct}%`;
+        if (pctEl) pctEl.textContent = `${Math.floor(pct)}%`;
+
+        const stepIdx = Math.min(
+            steps.length - 1,
+            Math.floor((elapsed / estimatedSec) * steps.length),
+        );
+        if (stepEl) stepEl.textContent = steps[stepIdx];
+    }, 400);
+}
+
+function stopPerfProgress(success, message) {
+    if (perfProgressTimer) {
+        clearInterval(perfProgressTimer);
+        perfProgressTimer = null;
+    }
+    const box = document.getElementById('perf-progress');
+    if (!box) return;
+
+    const fill = document.getElementById('perf-progress-fill');
+    const pctEl = document.getElementById('perf-progress-pct');
+    const etaEl = document.getElementById('perf-progress-eta');
+    const stepEl = document.getElementById('perf-progress-step');
+
+    if (success) {
+        box.classList.remove('perf-progress-active');
+        box.classList.add('perf-progress-done');
+        if (fill) fill.style.width = '100%';
+        if (pctEl) pctEl.textContent = '100%';
+        if (etaEl) etaEl.textContent = 'Hoàn tất';
+        if (stepEl) stepEl.textContent = message || 'Xong.';
+    } else {
+        box.classList.remove('perf-progress-active');
+        box.classList.add('perf-progress-error');
+        if (etaEl) etaEl.textContent = '';
+        if (stepEl) stepEl.textContent = message || 'Lỗi.';
+    }
+}
+
 async function perfSeedSelected() {
     const ids = perfSelectedPresetIds();
     if (ids.length !== 1) {
@@ -542,34 +661,45 @@ async function perfSeedSelected() {
     }
     const preset = perfPresetsCache.find((p) => p.id === ids[0]);
     if (!preset) return;
-    if (!confirm(`Seed ${preset.label}? Có thể mất vài phút với quy mô lớn.`)) return;
-    const prog = document.getElementById('perf-progress');
-    prog.style.display = 'block';
-    prog.textContent = 'Đang seed dữ liệu benchmark…';
+    const estSec = perfEstimateSeedSeconds(preset);
+    if (!confirm(`Seed ${preset.label}?\nƯớc tính ~${Math.ceil(estSec / 60)} phút.`)) return;
+    startPerfProgress({
+        title: `Đang seed ${preset.label}…`,
+        estimatedSec: estSec,
+        steps: PERF_SEED_STEPS,
+    });
     try {
         const r = await apiAdmin('/api/performance/seed', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ preset_id: preset.id }),
         });
-        prog.textContent = `Seed xong (${r.elapsed_sec}s). Luật: ${r.seeded_rules}, EAV: ${r.seeded_eav_rows}.`;
+        stopPerfProgress(
+            true,
+            `Seed xong (${r.elapsed_sec}s) — ${r.seeded_rules} luật, ${r.seeded_eav_rows?.toLocaleString('vi-VN')} EAV.`,
+        );
         loadPerfStatus();
     } catch (e) {
-        prog.textContent = e.message || String(e);
+        stopPerfProgress(false, e.message || String(e));
     }
 }
 
 async function perfCleanup() {
     if (!confirm('Xóa toàn bộ PERF_BENCH policies/EAV và khôi phục index mặc định?')) return;
-    const prog = document.getElementById('perf-progress');
-    prog.style.display = 'block';
-    prog.textContent = 'Đang dọn…';
+    startPerfProgress({
+        title: 'Đang dọn dữ liệu benchmark…',
+        estimatedSec: 25,
+        steps: ['Xóa policy_conditions…', 'Xóa policies PERF_BENCH…', 'Xóa EAV perf_bench…'],
+    });
     try {
         const r = await apiAdmin('/api/performance/cleanup', { method: 'POST' });
-        prog.textContent = `Đã xóa ${r.removed_policies} luật bench, ${r.removed_eav} EAV bench.`;
+        stopPerfProgress(
+            true,
+            `Đã xóa ${r.removed_policies} luật bench, ${r.removed_eav} EAV bench.`,
+        );
         loadPerfStatus();
     } catch (e) {
-        prog.textContent = e.message || String(e);
+        stopPerfProgress(false, e.message || String(e));
     }
 }
 
@@ -629,7 +759,7 @@ function restorePerfResultsFromStorage() {
     }
 }
 
-function perfEstimateRunMinutes(presetIds, scenarios, batches, requests) {
+function perfEstimateRunSeconds(presetIds, scenarios, batches, requests) {
     let totalSec = 0;
     presetIds.forEach((pid) => {
         const preset = perfPresetsCache.find((p) => p.id === pid);
@@ -639,9 +769,12 @@ function perfEstimateRunMinutes(presetIds, scenarios, batches, requests) {
             totalSec += (batches * requests * ms) / 1000;
         });
     });
-    // Index DROP/CREATE + overhead ~30s mỗi kịch bản/preset
     totalSec += presetIds.length * scenarios.length * 30;
-    return Math.max(1, Math.round(totalSec / 60));
+    return Math.max(30, Math.round(totalSec));
+}
+
+function perfEstimateRunMinutes(presetIds, scenarios, batches, requests) {
+    return Math.max(1, Math.round(perfEstimateRunSeconds(presetIds, scenarios, batches, requests) / 60));
 }
 
 function perfSuggestParams(presetIds) {
@@ -682,9 +815,13 @@ async function perfRunBenchmark() {
         `\nIndex sẽ DROP/CREATE tạm thời. Không đóng tab.`
     )) return;
 
-    const prog = document.getElementById('perf-progress');
-    prog.style.display = 'block';
-    prog.textContent = 'Đang chạy benchmark… không đóng tab.';
+    const estSec = perfEstimateRunSeconds(presetIds, scenarios, batches, requests);
+    startPerfProgress({
+        title: 'Đang chạy benchmark PDP…',
+        estimatedSec: estSec,
+        steps: PERF_RUN_STEPS,
+        hint: `~${estCalls.toLocaleString('vi-VN')} lần gọi PDP · không đóng tab.`,
+    });
     try {
         const data = await apiAdmin('/api/performance/run', {
             method: 'POST',
@@ -699,11 +836,14 @@ async function perfRunBenchmark() {
         const totalSec = (data.runs || []).reduce((s, r) => s + (r.elapsed_sec || 0), 0);
         savePerfResults(data);
         const rowCount = renderPerfResults(data);
-        prog.textContent = rowCount
-            ? `Hoàn tất: ${rowCount} dòng kết quả (${data.runs?.length || 0} preset, ~${totalSec}s). Cuộn xuống bảng bên dưới.`
-            : `Server trả về nhưng không có dòng kết quả (~${totalSec}s). Kiểm tra timeout hoặc giảm 1000×5.`;
+        stopPerfProgress(
+            true,
+            rowCount
+                ? `Hoàn tất: ${rowCount} dòng kết quả (${data.runs?.length || 0} preset, ~${totalSec}s).`
+                : `Server trả về nhưng không có dòng kết quả (~${totalSec}s).`,
+        );
         loadPerfStatus();
     } catch (e) {
-        prog.textContent = e.message || String(e);
+        stopPerfProgress(false, e.message || String(e));
     }
 }

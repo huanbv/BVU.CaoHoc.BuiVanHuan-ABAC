@@ -271,11 +271,84 @@ tr:hover td { background: var(--gray-50); }
 .perf-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
 .perf-progress {
     margin-top: 0.75rem;
-    padding: 0.75rem;
-    background: var(--primary-light);
+    padding: 1rem;
+    background: var(--gray-50);
     color: var(--gray-700);
-    border-radius: 6px;
+    border: 1px solid var(--gray-200);
+    border-radius: 8px;
     font-size: 0.85rem;
+}
+.perf-progress-active { border-color: var(--primary); }
+.perf-progress-done {
+    border-color: var(--success);
+    background: #f0fdf4;
+}
+.perf-progress-error {
+    border-color: var(--danger);
+    background: #fef2f2;
+}
+.perf-progress-header {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-bottom: 0.75rem;
+}
+.perf-progress-spinner {
+    width: 1.1rem;
+    height: 1.1rem;
+    border: 2px solid var(--gray-300);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: perf-spin 0.8s linear infinite;
+    flex-shrink: 0;
+}
+.perf-progress-done .perf-progress-spinner,
+.perf-progress-error .perf-progress-spinner { display: none; }
+@keyframes perf-spin { to { transform: rotate(360deg); } }
+.perf-progress-track {
+    height: 0.65rem;
+    background: var(--gray-200);
+    border-radius: 999px;
+    overflow: hidden;
+}
+.perf-progress-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--primary), #60a5fa);
+    background-size: 1.5rem 1.5rem;
+    transition: width 0.4s ease;
+    animation: perf-bar-stripe 1s linear infinite;
+}
+.perf-progress-done .perf-progress-fill {
+    background: var(--success);
+    animation: none;
+}
+.perf-progress-error .perf-progress-fill {
+    background: var(--danger);
+    animation: none;
+}
+@keyframes perf-bar-stripe {
+    0% { background-position: 0 0; }
+    100% { background-position: 1.5rem 0; }
+}
+.perf-progress-meta {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 0.4rem;
+    font-size: 0.8rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--gray-600);
+}
+.perf-progress-step {
+    margin: 0.6rem 0 0;
+    color: var(--gray-800);
+    font-weight: 500;
+}
+.perf-progress-hint {
+    margin: 0.35rem 0 0;
+    font-size: 0.78rem;
+    color: var(--gray-500);
 }
 .perf-results-table td:nth-child(3) { font-variant-numeric: tabular-nums; }
 .perf-ok { color: var(--success); font-weight: 600; }
