@@ -22,3 +22,10 @@ GRANT USAGE, SELECT ON SEQUENCE perf_benchmark_history_history_id_seq TO abac_us
 
 -- Batch PDP trong DB (sau perf_eval_batch.sql)
 GRANT EXECUTE ON FUNCTION perf_avg_eval_batch(INT[], INT[], INT[]) TO abac_user;
+
+-- Load test 3.2.3 (sau loadtest_functions.sql + loadtest_history.sql)
+GRANT EXECUTE ON FUNCTION loadtest_drop_lt_indexes() TO abac_user;
+GRANT EXECUTE ON FUNCTION loadtest_apply_config(TEXT) TO abac_user;
+GRANT EXECUTE ON FUNCTION loadtest_restore_indexes() TO abac_user;
+GRANT SELECT, INSERT, DELETE ON loadtest_history TO abac_user;
+GRANT USAGE, SELECT ON SEQUENCE loadtest_history_history_id_seq TO abac_user;

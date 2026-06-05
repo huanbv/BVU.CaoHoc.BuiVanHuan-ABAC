@@ -21,6 +21,14 @@ from flask_limiter.errors import RateLimitExceeded
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from database import execute, query_all, query_one
+from loadtest_bench import (
+    delete_loadtest_history,
+    get_loadtest_history,
+    get_status as loadtest_get_status,
+    list_loadtest_history,
+    run_multi_loadtest,
+    save_loadtest_history,
+)
 from performance_bench import (
     THESIS_PRESETS,
     cleanup_benchmark_seed,
@@ -698,6 +706,99 @@ def api_performance_history_delete(history_id: int):
         return jsonify({"deleted": history_id})
     except Exception as exc:
         return _perf_error_response(exc, log_message="api_performance_history_delete failed")
+
+
+# ---------------------------------------------------------------------------
+# API: Load test TPS/P95 (mục 3.2.3)
+# ---------------------------------------------------------------------------
+@app.route("/api/loadtest/status")
+@limiter.limit("60 per minute")
+def api_loadtest_status():
+    try:
+        return jsonify(loadtest_get_status())
+    except Exception as exc:
+        return api_error_response(app, exc, log_message="api_loadtest_status failed")
+
+
+@app.route("/api/loadtest/run", methods=["POST"])
+@limiter.limit(os.getenv("ABAC_LOADTEST_RUN_LIMIT", "10 per hour"))
+def api_loadtest_run():
+    auth = _perf_admin_required()
+    if auth is not None:
+        return auth
+    try:
+        data = request.get_json(force=True) or {}
+        config_ids = data.get("config_ids") or [
+            c["id"] for c in loadtest_get_status().get("configs", [])
+        ]
+        duration = data.get("duration_sec")
+        workers = data.get("workers")
+        warmup = data.get("warmup")
+
+        if duration is not None:
+            duration = max(10, min(180, int(duration)))
+        if workers is not None:
+            workers = max(1, min(16, int(workers)))
+        if warmup is not None:
+            warmup = max(0, min(500, int(warmup)))
+
+        result = run_multi_loadtest(
+            config_ids,
+            duration_sec=duration,
+            workers=workers,
+            warmup=warmup,
+            include_citus_forecast=bool(data.get("include_citus_forecast", True)),
+        )
+        note = (data.get("note") or "").strip() or None
+        try:
+            result["history_id"] = save_loadtest_history(result, note=note)
+        except Exception as save_exc:
+            app.logger.warning("loadtest history save failed: %s", save_exc)
+            result["history_save_error"] = str(save_exc)
+        return jsonify(result)
+    except Exception as exc:
+        return _perf_error_response(exc, log_message="api_loadtest_run failed")
+
+
+@app.route("/api/loadtest/history")
+@limiter.limit("60 per minute")
+def api_loadtest_history_list():
+    try:
+        limit = request.args.get("limit", 30, type=int)
+        return jsonify(
+            {
+                "ready": loadtest_get_status().get("history_table_ready"),
+                "items": list_loadtest_history(limit),
+            }
+        )
+    except Exception as exc:
+        return api_error_response(app, exc, log_message="api_loadtest_history_list failed")
+
+
+@app.route("/api/loadtest/history/<int:history_id>")
+@limiter.limit("60 per minute")
+def api_loadtest_history_get(history_id: int):
+    try:
+        item = get_loadtest_history(history_id)
+        if not item:
+            return jsonify({"error": "Không tìm thấy lịch sử."}), 404
+        return jsonify(item)
+    except Exception as exc:
+        return api_error_response(app, exc, log_message="api_loadtest_history_get failed")
+
+
+@app.route("/api/loadtest/history/<int:history_id>", methods=["DELETE"])
+@limiter.limit("20 per hour")
+def api_loadtest_history_delete(history_id: int):
+    auth = _perf_admin_required()
+    if auth is not None:
+        return auth
+    try:
+        if not delete_loadtest_history(history_id):
+            return jsonify({"error": "Không xóa được."}), 503
+        return jsonify({"deleted": history_id})
+    except Exception as exc:
+        return _perf_error_response(exc, log_message="api_loadtest_history_delete failed")
 
 
 # ---------------------------------------------------------------------------

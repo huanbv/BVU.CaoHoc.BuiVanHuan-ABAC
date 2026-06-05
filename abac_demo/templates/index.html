@@ -21,6 +21,7 @@
         <div class="tab" data-tab="policies">Chính sách</div>
         <div class="tab" data-tab="audit">Nhật ký kiểm toán</div>
         <div class="tab" data-tab="performance">Hiệu năng PDP</div>
+        <div class="tab" data-tab="loadtest">TPS / P95</div>
     </div>
 
     <div class="content">
@@ -335,6 +336,88 @@
                 <div style="overflow-x:auto;">
                     <table id="tbl-perf-compare" class="perf-results-table perf-compare-table">
                         <thead></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 6: LOAD TEST (3.2.3) -->
+        <div id="panel-loadtest" class="panel">
+            <div class="card">
+                <h2>Load test TPS / P95 (mục 3.2.3)</h2>
+                <p class="hint-security">
+                    Gọi <strong>request_access()</strong> (PEP + PDP + ghi request/decision) dưới tải đồng thời.
+                    Mỗi cấu hình chạy <span id="lt-duration-hint">30</span>s với <span id="lt-workers-hint">4</span> worker.
+                    Kết quả: <strong>TPS</strong> và <strong>P95 latency (ms)</strong> — Bảng 11 tiểu luận.
+                </p>
+                <div class="admin-token-bar">
+                    <label for="inp-lt-admin-token">Khóa quản trị</label>
+                    <input type="password" id="inp-lt-admin-token" autocomplete="off" spellcheck="false"
+                        placeholder="Dùng chung ABAC_ADMIN_TOKEN">
+                </div>
+                <div id="lt-status" class="perf-status"></div>
+            </div>
+
+            <div class="card">
+                <h3>Cấu hình chỉ mục / audit (chọn để đo)</h3>
+                <div id="lt-config-list" class="perf-check-grid"></div>
+                <div class="grid-2" style="margin-top:0.75rem;">
+                    <div>
+                        <label>Thời gian mỗi cấu hình (giây)</label>
+                        <input type="number" id="inp-lt-duration" min="10" max="180" value="30">
+                    </div>
+                    <div>
+                        <label>Số worker song song</label>
+                        <input type="number" id="inp-lt-workers" min="1" max="16" value="4">
+                    </div>
+                </div>
+                <div style="margin-top:0.75rem;">
+                    <label for="inp-lt-note">Ghi chú lần chạy</label>
+                    <input type="text" id="inp-lt-note" maxlength="120" placeholder="vd. 2000 luật seed, 30s×4 worker">
+                </div>
+                <div class="perf-actions">
+                    <button type="button" class="btn btn-primary" onclick="ltRunLoadtest()">Chạy load test</button>
+                    <button type="button" class="btn btn-sm" onclick="loadLtStatus()">Làm mới</button>
+                </div>
+                <div id="lt-progress" class="perf-progress" style="display:none;"></div>
+            </div>
+
+            <div class="card" id="lt-results-card">
+                <h3>Bảng 11 — Kết quả TPS / P95</h3>
+                <p id="lt-results-summary" class="hint-security"></p>
+                <div style="overflow-x:auto;">
+                    <table id="tbl-lt-results" class="perf-results-table">
+                        <thead>
+                            <tr>
+                                <th>Cấu hình</th>
+                                <th>TPS</th>
+                                <th>P95 (ms)</th>
+                                <th>Ghi chú</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="card" id="lt-history-card">
+                <h3>Lịch sử load test</h3>
+                <div class="perf-actions">
+                    <button type="button" class="btn btn-sm" onclick="loadLtHistory()">Làm mới lịch sử</button>
+                    <button type="button" class="btn btn-sm" onclick="ltDeleteHistorySelected()">Xóa đã chọn</button>
+                </div>
+                <div style="overflow-x:auto; margin-top:0.75rem;">
+                    <table id="tbl-lt-history" class="perf-results-table">
+                        <thead>
+                            <tr>
+                                <th><input type="checkbox" id="lt-history-check-all"></th>
+                                <th>Thời gian</th>
+                                <th>Ghi chú</th>
+                                <th>Tham số</th>
+                                <th></th>
+                            </tr>
+                        </thead>
                         <tbody></tbody>
                     </table>
                 </div>

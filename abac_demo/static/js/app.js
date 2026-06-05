@@ -51,6 +51,10 @@ document.querySelectorAll('.tab').forEach(tab => {
             loadPerfStatus();
             loadPerfHistory();
         }
+        if (tab.dataset.tab === 'loadtest') {
+            loadLtStatus();
+            loadLtHistory();
+        }
     });
 });
 
@@ -98,7 +102,7 @@ function statusBadge(s) {
 }
 
 function getAdminToken() {
-    const ids = ['inp-perf-admin-token', 'inp-admin-token'];
+    const ids = ['inp-lt-admin-token', 'inp-perf-admin-token', 'inp-admin-token'];
     for (const id of ids) {
         const el = document.getElementById(id);
         const v = (el?.value || '').trim();
@@ -115,7 +119,7 @@ function bindAdminTokenInput(id) {
         const v = el.value.trim();
         if (v) sessionStorage.setItem(ABAC_ADMIN_SS_KEY, v);
         else sessionStorage.removeItem(ABAC_ADMIN_SS_KEY);
-        document.querySelectorAll('#inp-admin-token, #inp-perf-admin-token').forEach((inp) => {
+        document.querySelectorAll('#inp-admin-token, #inp-perf-admin-token, #inp-lt-admin-token').forEach((inp) => {
             if (inp && inp !== el) inp.value = v;
         });
     });
@@ -124,6 +128,7 @@ function bindAdminTokenInput(id) {
 (function initAdminTokenFields() {
     bindAdminTokenInput('inp-admin-token');
     bindAdminTokenInput('inp-perf-admin-token');
+    bindAdminTokenInput('inp-lt-admin-token');
 })();
 
 const apiAdmin = async (url, opts = {}) => {
@@ -996,6 +1001,213 @@ async function perfRunBenchmark() {
         );
         loadPerfStatus();
         loadPerfHistory();
+    } catch (e) {
+        stopPerfProgress(false, e.message || String(e));
+    }
+}
+
+// ============================================================
+// LOAD TEST TPS/P95 (3.2.3)
+// ============================================================
+const LT_RESULTS_SS_KEY = 'abac_lt_last_results';
+
+function ltSelectedConfigIds() {
+    return [...document.querySelectorAll('input[name="lt-config"]:checked')]
+        .map((el) => el.value);
+}
+
+function renderLtConfigList(configs) {
+    const box = document.getElementById('lt-config-list');
+    if (!box) return;
+    box.innerHTML = (configs || []).map((c) => `
+        <label class="perf-preset-item">
+            <input type="checkbox" name="lt-config" value="${escHtml(c.id)}" checked>
+            <span><b>${escHtml(c.label)}</b></span>
+            <span class="perf-preset-meta">${escHtml(c.note || '')}</span>
+        </label>
+    `).join('');
+}
+
+async function loadLtStatus() {
+    const st = await api('/api/loadtest/status');
+    const c = st.counts || {};
+    const el = document.getElementById('lt-status');
+    if (el) {
+        el.innerHTML = `
+            <div><b>Luật bật:</b> ${c.enabled_policies ?? '—'} · <b>Users:</b> ${c.users ?? '—'} · <b>Requests:</b> ${c.access_requests ?? '—'}</div>
+            <div><b>loadtest_functions:</b> ${st.loadtest_functions_available ? 'yes' : 'no'}
+            · <b>history:</b> ${st.history_table_ready ? 'yes' : 'no'}</div>
+            <div><b>Index LT:</b> ${(st.active_loadtest_indexes || []).join(', ') || '—'}</div>
+            ${!st.loadtest_functions_available ? '<div class="perf-bad">Chạy scripts/loadtest_functions.sql trên PostgreSQL</div>' : ''}
+        `;
+    }
+    renderLtConfigList(st.configs || []);
+    const dur = document.getElementById('inp-lt-duration');
+    const wrk = document.getElementById('inp-lt-workers');
+    if (dur && st.defaults?.duration_sec) dur.value = st.defaults.duration_sec;
+    if (wrk && st.defaults?.workers) wrk.value = st.defaults.workers;
+    const dh = document.getElementById('lt-duration-hint');
+    const wh = document.getElementById('lt-workers-hint');
+    if (dh && dur) dh.textContent = dur.value;
+    if (wh && wrk) wh.textContent = wrk.value;
+    restoreLtResultsFromStorage();
+}
+
+document.querySelectorAll('#inp-lt-duration, #inp-lt-workers').forEach((el) => {
+    el?.addEventListener('input', () => {
+        const dh = document.getElementById('lt-duration-hint');
+        const wh = document.getElementById('lt-workers-hint');
+        if (el.id === 'inp-lt-duration' && dh) dh.textContent = el.value;
+        if (el.id === 'inp-lt-workers' && wh) wh.textContent = el.value;
+    });
+});
+
+function renderLtResults(payload) {
+    const tbody = document.querySelector('#tbl-lt-results tbody');
+    const summary = document.getElementById('lt-results-summary');
+    if (!tbody) return 0;
+    const rows = [];
+    (payload.table_rows || []).forEach((r) => {
+        rows.push(`<tr>
+            <td>${escHtml(r.label)}</td>
+            <td><b>${r.tps ?? '—'}</b></td>
+            <td><b>${r.p95_ms ?? '—'}</b></td>
+            <td>${escHtml(r.note || 'Đo thực tế')}</td>
+        </tr>`);
+    });
+    if (payload.forecast_row) {
+        const f = payload.forecast_row;
+        rows.push(`<tr class="lt-forecast-row">
+            <td>${escHtml(f.label)}</td>
+            <td>~${f.tps ?? '—'}</td>
+            <td>~${f.p95_ms ?? '—'}</td>
+            <td>${escHtml(f.note || 'Dự báo')}</td>
+        </tr>`);
+    }
+    tbody.innerHTML = rows.join('') || '<tr><td colspan="4">Chưa có kết quả</td></tr>';
+    if (summary) {
+        const n = (payload.table_rows || []).length;
+        summary.textContent = n
+            ? `${n} cấu hình đo thực tế${payload.history_id ? ` · lịch sử #${payload.history_id}` : ''}`
+            : 'Chưa có dòng kết quả.';
+    }
+    document.getElementById('lt-results-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return rows.length;
+}
+
+function saveLtResults(payload) {
+    try {
+        sessionStorage.setItem(LT_RESULTS_SS_KEY, JSON.stringify({ ...payload, saved_at: new Date().toISOString() }));
+    } catch { /* ignore */ }
+}
+
+function restoreLtResultsFromStorage() {
+    try {
+        const raw = sessionStorage.getItem(LT_RESULTS_SS_KEY);
+        if (raw) renderLtResults(JSON.parse(raw));
+    } catch { /* ignore */ }
+}
+
+async function loadLtHistory() {
+    const tbody = document.querySelector('#tbl-lt-history tbody');
+    if (!tbody) return;
+    try {
+        const data = await api('/api/loadtest/history');
+        const items = data.items || [];
+        if (!data.ready) {
+            tbody.innerHTML = '<tr><td colspan="5">Chưa cài loadtest_history.sql</td></tr>';
+            return;
+        }
+        if (!items.length) {
+            tbody.innerHTML = '<tr><td colspan="5">Chưa có lần chạy nào.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = items.map((h) => `
+            <tr>
+                <td><input type="checkbox" name="lt-history" value="${h.history_id}"></td>
+                <td>${escHtml(new Date(h.created_at).toLocaleString('vi-VN'))}</td>
+                <td>${escHtml(h.note || '—')}</td>
+                <td>${h.duration_sec}s · ${h.workers} worker · ${h.row_count} dòng</td>
+                <td><button type="button" class="btn btn-sm" onclick="ltViewHistory(${h.history_id})">Xem</button></td>
+            </tr>
+        `).join('');
+        const checkAll = document.getElementById('lt-history-check-all');
+        if (checkAll) {
+            checkAll.onchange = () => {
+                document.querySelectorAll('input[name="lt-history"]').forEach((cb) => {
+                    cb.checked = checkAll.checked;
+                });
+            };
+        }
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="5">${escHtml(e.message)}</td></tr>`;
+    }
+}
+
+async function ltViewHistory(historyId) {
+    const item = await api(`/api/loadtest/history/${historyId}`);
+    const payload = item.payload || {};
+    payload.history_id = item.history_id;
+    saveLtResults(payload);
+    renderLtResults(payload);
+}
+
+async function ltDeleteHistorySelected() {
+    const ids = [...document.querySelectorAll('input[name="lt-history"]:checked')]
+        .map((el) => parseInt(el.value, 10)).filter((n) => !Number.isNaN(n));
+    if (!ids.length) { alert('Chọn ít nhất một dòng.'); return; }
+    if (!confirm(`Xóa ${ids.length} bản ghi lịch sử load test?`)) return;
+    for (const id of ids) {
+        await apiAdmin(`/api/loadtest/history/${id}`, { method: 'DELETE' });
+    }
+    loadLtHistory();
+}
+
+async function ltRunLoadtest() {
+    const configIds = ltSelectedConfigIds();
+    if (!configIds.length) { alert('Chọn ít nhất một cấu hình.'); return; }
+    const duration = parseInt(document.getElementById('inp-lt-duration')?.value, 10) || 30;
+    const workers = parseInt(document.getElementById('inp-lt-workers')?.value, 10) || 4;
+    const estSec = configIds.length * duration + 30;
+    if (!confirm(
+        `Chạy load test?\n- ${configIds.length} cấu hình × ${duration}s × ${workers} worker\n` +
+        `Ước tính ~${Math.ceil(estSec / 60)} phút. Không đóng tab.`
+    )) return;
+
+    startPerfProgress({
+        title: 'Đang chạy load test TPS/P95…',
+        estimatedSec: estSec,
+        steps: [
+            'Áp dụng cấu hình chỉ mục…',
+            'Warm-up request_access()…',
+            'Đo tải song song (TPS)…',
+            'Tính P95 latency…',
+            'Khôi phục chỉ mục…',
+        ],
+        hint: 'Gọi request_access() — ghi access_requests/decisions.',
+    });
+    const prog = document.getElementById('lt-progress');
+    if (prog) { prog.style.display = 'block'; prog.textContent = 'Đang chạy…'; }
+
+    try {
+        const note = (document.getElementById('inp-lt-note')?.value || '').trim();
+        const data = await apiAdmin('/api/loadtest/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                config_ids: configIds,
+                duration_sec: duration,
+                workers,
+                note: note || undefined,
+                include_citus_forecast: true,
+            }),
+        });
+        saveLtResults(data);
+        const n = renderLtResults(data);
+        const hist = data.history_id ? ` · lịch sử #${data.history_id}` : '';
+        stopPerfProgress(true, `Hoàn tất: ${n} dòng Bảng 11${hist}.`);
+        loadLtStatus();
+        loadLtHistory();
     } catch (e) {
         stopPerfProgress(false, e.message || String(e));
     }

@@ -131,6 +131,26 @@ sudo -u postgres psql -d abac_demo -v app_user=abac_user -v ON_ERROR_STOP=1 -f s
 - **Timeout:** Gunicorn mặc định 30s sẽ cắt benchmark → UI không nhận JSON. Thêm `--timeout 900` vào `ExecStart` (xem `deploy/systemd/abac-demo.service.example`). Nginx: `proxy_read_timeout 900s` cho `/api/performance/` (xem `deploy/nginx/abac.thehuan.com.conf`).
 - Quy trình: **Seed preset** → **Chạy benchmark**. Lần đầu thử **100 yêu cầu × 3 đợt × 1 kịch bản** để xác nhận bảng kết quả hiện.
 
+## Tab TPS / P95 (mục 3.2.3 — Bảng 11)
+
+- UI: tab **TPS / P95** — load test `request_access()` (PEP+PDP+ghi request), đo **TPS** và **P95 latency**.
+- SQL (một lần):
+
+```bash
+sudo -u postgres psql -d abac_demo -v ON_ERROR_STOP=1 -f scripts/loadtest_functions.sql
+sudo -u postgres psql -d abac_demo -v ON_ERROR_STOP=1 -f scripts/loadtest_history.sql
+```
+
+- CLI trên VPS (tuỳ chọn):
+
+```bash
+source venv/bin/activate && set -a && source /etc/abac-app.env && set +a
+python scripts/run_loadtest_cli.py --duration 30 --workers 4 --save --note "Bảng 11"
+```
+
+- Biến: `ABAC_LOADTEST_DURATION_SEC` (30), `ABAC_LOADTEST_WORKERS` (4), `ABAC_LOADTEST_RUN_LIMIT` (10/hour).
+- Nginx: `proxy_read_timeout 900s` cho `/api/loadtest/` (cùng rule với `/api/performance/`).
+
 ## Notes
 
 - Production stack binds app to `127.0.0.1:5000`; public access should go through Nginx only.
