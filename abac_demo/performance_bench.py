@@ -330,23 +330,28 @@ def seed_benchmark_scale(rules: int, eav_rows: int) -> dict[str, Any]:
     )
 
     if eav_rows > 0:
+        # Phân bổ user_id theo modulo (O(n)), tránh OFFSET từng dòng — 500k EAV seed nhanh hơn rất nhiều.
         execute(
             f"""
+            WITH ranked_users AS (
+                SELECT
+                    user_id,
+                    (row_number() OVER (ORDER BY user_id) - 1)::bigint AS idx
+                FROM users
+            ),
+            user_count AS (
+                SELECT GREATEST(COUNT(*)::bigint, 1) AS n FROM ranked_users
+            )
             INSERT INTO user_attributes (user_id, attr_key, attr_value, valid_from, valid_to)
             SELECT
-                u.user_id,
+                ru.user_id,
                 '{BENCH_ATTR_PREFIX}' || ((gs %% 50) + 1)::TEXT,
                 'bench_value',
                 TIMESTAMPTZ '2020-01-01' + (gs * INTERVAL '1 millisecond'),
                 CASE WHEN gs %% 17 = 0 THEN TIMESTAMPTZ '2019-12-31' ELSE NULL END
             FROM generate_series(1, %s) AS gs
-            JOIN LATERAL (
-                SELECT user_id
-                FROM users
-                ORDER BY user_id
-                OFFSET ((gs - 1) %% (SELECT GREATEST(COUNT(*)::bigint, 1) FROM users))
-                LIMIT 1
-            ) u ON TRUE
+            CROSS JOIN user_count uc
+            JOIN ranked_users ru ON ru.idx = (gs - 1) %% uc.n
             """,
             (eav_rows,),
         )

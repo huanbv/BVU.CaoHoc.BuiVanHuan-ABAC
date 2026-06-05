@@ -629,6 +629,32 @@ function restorePerfResultsFromStorage() {
     }
 }
 
+function perfEstimateRunMinutes(presetIds, scenarios, batches, requests) {
+    let totalSec = 0;
+    presetIds.forEach((pid) => {
+        const preset = perfPresetsCache.find((p) => p.id === pid);
+        if (!preset?.thesis_ms) return;
+        scenarios.forEach((sc) => {
+            const ms = preset.thesis_ms[sc] || preset.thesis_ms.btree_partial || 50;
+            totalSec += (batches * requests * ms) / 1000;
+        });
+    });
+    // Index DROP/CREATE + overhead ~30s mỗi kịch bản/preset
+    totalSec += presetIds.length * scenarios.length * 30;
+    return Math.max(1, Math.round(totalSec / 60));
+}
+
+function perfSuggestParams(presetIds) {
+    const maxRules = presetIds.reduce((m, pid) => {
+        const p = perfPresetsCache.find((x) => x.id === pid);
+        return Math.max(m, p?.rules || 0);
+    }, 0);
+    if (maxRules >= 2000) return { requests: 50, batches: 3, note: '2.000 luật: dùng 50×3, 1 kịch bản/lần' };
+    if (maxRules >= 1000) return { requests: 100, batches: 3, note: '1.000 luật: dùng 100×3' };
+    if (maxRules >= 500) return { requests: 200, batches: 3, note: '500 luật: dùng 200×3' };
+    return { requests: 1000, batches: 5, note: null };
+}
+
 async function perfRunBenchmark() {
     const presetIds = perfSelectedPresetIds();
     const scenarios = perfSelectedScenarios();
@@ -642,12 +668,18 @@ async function perfRunBenchmark() {
     }
     const requests = parseInt(document.getElementById('inp-perf-requests')?.value, 10) || 1000;
     const batches = parseInt(document.getElementById('inp-perf-batches')?.value, 10) || 5;
-    const est = presetIds.length * scenarios.length * batches * requests;
+    const estCalls = presetIds.length * scenarios.length * batches * requests;
+    const estMin = perfEstimateRunMinutes(presetIds, scenarios, batches, requests);
+    const suggest = perfSuggestParams(presetIds);
+    const slowWarn = estMin >= 30
+        ? `\n⚠ Ước tính ~${estMin} phút — preset lớn rất chậm (mỗi lần PDP có thể 0,1–1+ giây).\nGợi ý: ${suggest.note || 'giảm yêu cầu/đợt'}, chạy 1 preset + 1 kịch bản mỗi lần.`
+        : `\nƯớc tính ~${estMin} phút.`;
     if (!confirm(
         `Chạy benchmark?\n` +
         `- ${presetIds.length} preset × ${scenarios.length} kịch bản\n` +
-        `- ~${est.toLocaleString('vi-VN')} lần gọi PDP\n` +
-        `Index sẽ DROP/CREATE tạm thời.`
+        `- ~${estCalls.toLocaleString('vi-VN')} lần gọi PDP` +
+        slowWarn +
+        `\nIndex sẽ DROP/CREATE tạm thời. Không đóng tab.`
     )) return;
 
     const prog = document.getElementById('perf-progress');
