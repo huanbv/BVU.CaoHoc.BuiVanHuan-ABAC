@@ -472,6 +472,8 @@ const PERF_SCENARIO_LABELS = {
 let perfPresetsCache = [];
 const PERF_RESULTS_SS_KEY = 'abac_perf_last_results';
 let perfProgressTimer = null;
+let perfProgressActiveBoxId = 'perf-progress';
+let ltStatusCache = null;
 
 const PERF_RUN_STEPS = [
     'Kiểm tra quy mô luật và EAV…',
@@ -591,9 +593,16 @@ function perfEstimateSeedSeconds(preset) {
     return Math.max(20, Math.round(preset.rules / 15 + preset.eav_rows / 6000 + 15));
 }
 
+function updatePerfProgressStep(message, boxId) {
+    const stepEl = document.getElementById(`${boxId || perfProgressActiveBoxId}-step`);
+    if (stepEl) stepEl.textContent = message;
+}
+
 function startPerfProgress(opts) {
     stopPerfProgress();
-    const box = document.getElementById('perf-progress');
+    const boxId = opts.boxId || 'perf-progress';
+    perfProgressActiveBoxId = boxId;
+    const box = document.getElementById(boxId);
     if (!box) return;
 
     const {
@@ -611,23 +620,23 @@ function startPerfProgress(opts) {
             <strong class="perf-progress-title">${escHtml(title)}</strong>
         </div>
         <div class="perf-progress-track">
-            <div class="perf-progress-fill" id="perf-progress-fill"></div>
+            <div class="perf-progress-fill" id="${boxId}-fill"></div>
         </div>
         <div class="perf-progress-meta">
-            <span id="perf-progress-pct">0%</span>
-            <span id="perf-progress-eta">Còn khoảng ${perfFormatDuration(estimatedSec)}</span>
+            <span id="${boxId}-pct">0%</span>
+            <span id="${boxId}-eta">Còn khoảng ${perfFormatDuration(estimatedSec)}</span>
         </div>
-        <p class="perf-progress-step" id="perf-progress-step">${escHtml(steps[0])}</p>
+        <p class="perf-progress-step" id="${boxId}-step">${escHtml(steps[0])}</p>
         <p class="perf-progress-hint">${escHtml(hint)}</p>
     `;
 
     const start = Date.now();
     perfProgressTimer = setInterval(() => {
         const elapsed = (Date.now() - start) / 1000;
-        const fill = document.getElementById('perf-progress-fill');
-        const pctEl = document.getElementById('perf-progress-pct');
-        const etaEl = document.getElementById('perf-progress-eta');
-        const stepEl = document.getElementById('perf-progress-step');
+        const fill = document.getElementById(`${boxId}-fill`);
+        const pctEl = document.getElementById(`${boxId}-pct`);
+        const etaEl = document.getElementById(`${boxId}-eta`);
+        const stepEl = document.getElementById(`${boxId}-step`);
 
         let pct;
         if (elapsed >= estimatedSec) {
@@ -648,18 +657,21 @@ function startPerfProgress(opts) {
     }, 400);
 }
 
-function stopPerfProgress(success, message) {
+function stopPerfProgress(success, message, boxId) {
     if (perfProgressTimer) {
         clearInterval(perfProgressTimer);
         perfProgressTimer = null;
     }
-    const box = document.getElementById('perf-progress');
+    if (success === undefined && message === undefined) return;
+
+    const id = boxId || perfProgressActiveBoxId;
+    const box = document.getElementById(id);
     if (!box) return;
 
-    const fill = document.getElementById('perf-progress-fill');
-    const pctEl = document.getElementById('perf-progress-pct');
-    const etaEl = document.getElementById('perf-progress-eta');
-    const stepEl = document.getElementById('perf-progress-step');
+    const fill = document.getElementById(`${id}-fill`);
+    const pctEl = document.getElementById(`${id}-pct`);
+    const etaEl = document.getElementById(`${id}-eta`);
+    const stepEl = document.getElementById(`${id}-step`);
 
     if (success) {
         box.classList.remove('perf-progress-active');
@@ -1030,6 +1042,7 @@ function renderLtConfigList(configs) {
 
 async function loadLtStatus() {
     const st = await api('/api/loadtest/status');
+    ltStatusCache = st;
     const c = st.counts || {};
     const el = document.getElementById('lt-status');
     if (el) {
@@ -1164,51 +1177,95 @@ async function ltDeleteHistorySelected() {
 }
 
 async function ltRunLoadtest() {
+    if (!ltStatusCache) await loadLtStatus();
     const configIds = ltSelectedConfigIds();
     if (!configIds.length) { alert('Chọn ít nhất một cấu hình.'); return; }
     const duration = parseInt(document.getElementById('inp-lt-duration')?.value, 10) || 30;
     const workers = parseInt(document.getElementById('inp-lt-workers')?.value, 10) || 4;
-    const estSec = configIds.length * duration + 30;
+    const configs = ltStatusCache?.configs || [];
+    const configLabels = configIds.map((id) => {
+        const c = configs.find((x) => x.id === id);
+        return c ? c.label : id;
+    });
+    const perConfigSec = duration + 15;
+    const estSec = configIds.length * perConfigSec + 20;
     if (!confirm(
         `Chạy load test?\n- ${configIds.length} cấu hình × ${duration}s × ${workers} worker\n` +
         `Ước tính ~${Math.ceil(estSec / 60)} phút. Không đóng tab.`
     )) return;
 
+    const progressBoxId = 'lt-progress';
     startPerfProgress({
+        boxId: progressBoxId,
         title: 'Đang chạy load test TPS/P95…',
         estimatedSec: estSec,
-        steps: [
-            'Áp dụng cấu hình chỉ mục…',
-            'Warm-up request_access()…',
-            'Đo tải song song (TPS)…',
-            'Tính P95 latency…',
-            'Khôi phục chỉ mục…',
-        ],
-        hint: 'Gọi request_access() — ghi access_requests/decisions.',
+        steps: configLabels.map((label, i) => `Cấu hình ${i + 1}/${configIds.length}: ${label}`),
+        hint: 'Mỗi cấu hình chạy riêng — tránh timeout gateway.',
     });
-    const prog = document.getElementById('lt-progress');
-    if (prog) { prog.style.display = 'block'; prog.textContent = 'Đang chạy…'; }
+
+    const allRuns = [];
+    const allRows = [];
+    let lastPayload = null;
 
     try {
+        for (let i = 0; i < configIds.length; i++) {
+            const cid = configIds[i];
+            const label = configLabels[i];
+            updatePerfProgressStep(
+                `Cấu hình ${i + 1}/${configIds.length}: ${label} — warm-up & đo TPS…`,
+                progressBoxId,
+            );
+            const data = await apiAdmin('/api/loadtest/run', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    config_ids: [cid],
+                    duration_sec: duration,
+                    workers,
+                    save_history: false,
+                    include_citus_forecast: false,
+                }),
+            });
+            allRuns.push(...(data.runs || []));
+            allRows.push(...(data.table_rows || []));
+            lastPayload = data;
+        }
+
         const note = (document.getElementById('inp-lt-note')?.value || '').trim();
-        const data = await apiAdmin('/api/loadtest/run', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                config_ids: configIds,
-                duration_sec: duration,
-                workers,
-                note: note || undefined,
-                include_citus_forecast: true,
-            }),
-        });
-        saveLtResults(data);
-        const n = renderLtResults(data);
-        const hist = data.history_id ? ` · lịch sử #${data.history_id}` : '';
-        stopPerfProgress(true, `Hoàn tất: ${n} dòng Bảng 11${hist}.`);
+        const merged = {
+            runs: allRuns,
+            duration_sec: duration,
+            workers,
+            warmup: lastPayload?.warmup,
+            table_rows: allRows,
+        };
+        const forecast = ltStatusCache?.citus_forecast;
+        if (forecast) {
+            merged.forecast_row = {
+                ...forecast,
+                tps: forecast.tps,
+                p95_ms: forecast.p95_ms,
+            };
+        }
+
+        try {
+            const saveRes = await apiAdmin('/api/loadtest/history', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ payload: merged, note: note || undefined }),
+            });
+            if (saveRes.history_id) merged.history_id = saveRes.history_id;
+        } catch (saveErr) {
+            merged.history_save_error = saveErr.message || String(saveErr);
+        }
+
+        saveLtResults(merged);
+        const n = renderLtResults(merged);
+        const hist = merged.history_id ? ` · lịch sử #${merged.history_id}` : '';
+        stopPerfProgress(true, `Hoàn tất: ${n} dòng Bảng 11${hist}.`, progressBoxId);
         loadLtStatus();
         loadLtHistory();
     } catch (e) {
-        stopPerfProgress(false, e.message || String(e));
+        stopPerfProgress(false, e.message || String(e), progressBoxId);
     }
 }

@@ -749,20 +749,35 @@ def api_loadtest_run():
             warmup=warmup,
             include_citus_forecast=bool(data.get("include_citus_forecast", True)),
         )
-        note = (data.get("note") or "").strip() or None
-        try:
-            result["history_id"] = save_loadtest_history(result, note=note)
-        except Exception as save_exc:
-            app.logger.warning("loadtest history save failed: %s", save_exc)
-            result["history_save_error"] = str(save_exc)
+        if data.get("save_history", True):
+            note = (data.get("note") or "").strip() or None
+            try:
+                result["history_id"] = save_loadtest_history(result, note=note)
+            except Exception as save_exc:
+                app.logger.warning("loadtest history save failed: %s", save_exc)
+                result["history_save_error"] = str(save_exc)
         return jsonify(result)
     except Exception as exc:
         return _perf_error_response(exc, log_message="api_loadtest_run failed")
 
 
-@app.route("/api/loadtest/history")
+@app.route("/api/loadtest/history", methods=["GET", "POST"])
 @limiter.limit("60 per minute")
 def api_loadtest_history_list():
+    if request.method == "POST":
+        auth = _perf_admin_required()
+        if auth is not None:
+            return auth
+        try:
+            data = request.get_json(force=True) or {}
+            payload = data.get("payload")
+            if not payload or not isinstance(payload, dict):
+                return jsonify({"error": "Thiếu payload hợp lệ."}), 400
+            note = (data.get("note") or "").strip() or None
+            history_id = save_loadtest_history(payload, note=note)
+            return jsonify({"history_id": history_id})
+        except Exception as exc:
+            return _perf_error_response(exc, log_message="api_loadtest_history_save failed")
     try:
         limit = request.args.get("limit", 30, type=int)
         return jsonify(
