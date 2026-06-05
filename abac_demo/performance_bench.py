@@ -285,7 +285,7 @@ def seed_benchmark_scale(rules: int, eav_rows: int) -> dict[str, Any]:
         SELECT
             '{BENCH_POLICY_PREFIX}' || gs::TEXT,
             'Benchmark policy row ' || gs::TEXT,
-            CASE WHEN gs % 5 = 0 THEN 'permit' ELSE 'deny' END,
+            CASE WHEN gs %% 5 = 0 THEN 'permit' ELSE 'deny' END,
             50000 + gs,
             '*',
             '*',
@@ -302,7 +302,7 @@ def seed_benchmark_scale(rules: int, eav_rows: int) -> dict[str, Any]:
         SELECT
             p.policy_id,
             'subject',
-            '{BENCH_ATTR_PREFIX}' || ((p.policy_id % 50) + 1)::TEXT,
+            '{BENCH_ATTR_PREFIX}' || ((p.policy_id %% 50) + 1)::TEXT,
             'eq',
             'bench_value',
             'text'
